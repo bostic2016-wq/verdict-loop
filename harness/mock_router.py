@@ -24,6 +24,7 @@ class MockRouter:
         *,
         json_mode: bool = False,
         temperature: float = 0.4,
+        max_tokens: int | None = None,
     ) -> str:
         self.calls.append(role)
         if role == "scout":

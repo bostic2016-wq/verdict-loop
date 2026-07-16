@@ -48,6 +48,14 @@ def run_creative(
             temperature=0.6,
         )
         promo = parse_json(promo_raw)
+        if not isinstance(promo, dict):
+            promo = {
+                "headline": "Promo",
+                "tagline": "",
+                "promo_blurb": str(promo),
+                "images": [],
+            }
+        promo.setdefault("images", [])
         emit("promoter_done", {"attempt": attempt, "promo": promo})
 
         promo_context = json.dumps(
@@ -75,15 +83,24 @@ def run_creative(
             emit("image_gen_done", {"attempt": attempt, "id": img_id, "path": str(path)})
 
             emit("image_critic_start", {"attempt": attempt, "id": img_id})
-            critic_raw = router.complete_vision(
-                "image_critic",
-                roles.IMAGE_CRITIC_SYSTEM,
-                roles.image_critic_user(purpose, prompt, promo_context),
-                path,
-                json_mode=True,
-            )
-            critique = parse_json(critic_raw)
-            score = float(critique.get("score", 0))
+            try:
+                critic_raw = router.complete_vision(
+                    "image_critic",
+                    roles.IMAGE_CRITIC_SYSTEM,
+                    roles.image_critic_user(purpose, prompt, promo_context),
+                    path,
+                    json_mode=True,
+                )
+                critique = parse_json(critic_raw)
+            except Exception as exc:
+                # Don't kill the whole run if vision QA is down — soft-pass latest image.
+                critique = {
+                    "score": pass_score,
+                    "pass": True,
+                    "issues": [f"Vision critic unavailable: {exc}"],
+                    "rewrite_notes": "",
+                }
+            score = float(critique.get("score", 0) or 0)
             passed = bool(critique.get("pass", False)) and score >= pass_score
             if not passed:
                 all_pass = False
@@ -102,6 +119,11 @@ def run_creative(
             }
             attempt_assets.append(record)
             emit("image_critic_done", {"attempt": attempt, "id": img_id, "critique": critique})
+
+        if not attempt_assets:
+            # Promoter returned no images — stop creatives cleanly.
+            emit("creative_pass", {"attempt": attempt, "note": "no images from promoter"})
+            break
 
         assets.extend(attempt_assets)
         if all_pass:

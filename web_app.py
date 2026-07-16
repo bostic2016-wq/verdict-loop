@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Optional
+
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -32,7 +34,7 @@ async def home(request: Request):
 async def run(
     request: Request,
     claim: str = Form(...),
-    with_images: str = Form("on"),
+    with_images: Optional[str] = Form(None),
 ):
     claim = claim.strip()
     if not claim:

@@ -10,22 +10,28 @@
   <main class="wrap">
     <header class="hero">
       <p class="brand">Verdict Loop</p>
-      <h1>Stress-test a plan. Then generate creatives.</h1>
+      <h1>Stress-test a plan.<br />Then generate creatives.</h1>
       <p class="lede">
-        Scout researches. Advocate and Skeptic argue. Judge decides.
-        Then Promoter writes the pitch, an image model draws, and a vision critic QA-checks.
+        A multi-model red team for decisions — research, argue both sides,
+        judge the case, then optionally ship promo copy and images.
       </p>
+      <div class="steps">
+        <div class="step"><strong>1 · Scout</strong>Maps risks &amp; unknowns</div>
+        <div class="step"><strong>2 · Debate</strong>Advocate vs Skeptic</div>
+        <div class="step"><strong>3 · Judge</strong>Do / don’t / only if</div>
+        <div class="step"><strong>4 · Creative</strong>Copy + image QA loop</div>
+      </div>
     </header>
 
     <form class="form" method="post" action="/run">
       <label for="claim">Your plan or claim</label>
       <textarea id="claim" name="claim" rows="6" placeholder="e.g. Should I launch a weekend newsletter about city walks for local businesses?" required></textarea>
       <label class="check">
-        <input type="checkbox" name="with_images" checked />
-        Run promo + image loop after the verdict
+        <input type="checkbox" name="with_images" value="on" checked />
+        Also run promo + image loop
       </label>
       <button type="submit">Run red team</button>
-      <p class="hint">Free stack: Groq + Gemini + Pollinations. First run can take a few minutes.</p>
+      <p class="hint">Free-tier APIs (Groq + Gemini + Pollinations). Rate limits apply. First run can take a few minutes.</p>
     </form>
 
     {% if error %}
@@ -36,19 +42,23 @@
     {% endif %}
 
     {% if result %}
-    <section class="card">
+    {% set v = result.debate.verdict %}
+    {% set rec = (v.recommendation or 'only_if')|lower|replace('-', '')|replace(' ', '') %}
+    {% set vclass = 'verdict-only_if' %}
+    {% if rec in ['do', 'go', 'yes'] %}{% set vclass = 'verdict-do' %}{% endif %}
+    {% if rec in ['dont', "don't", 'no'] %}{% set vclass = 'verdict-dont' %}{% endif %}
+    <section class="card {{ vclass }}">
       <h2>Verdict</h2>
-      {% set v = result.debate.verdict %}
       <p class="badge">{{ v.recommendation }} · score {{ v.score }}</p>
       <p>{{ v.reasoning }}</p>
       {% if v.conditions %}
+      <p><strong>Only proceed if</strong></p>
       <ul>
         {% for c in v.conditions %}
         <li>{{ c }}</li>
         {% endfor %}
       </ul>
       {% endif %}
-      <p class="muted">Full report: <code>{{ result.run_dir }}/report.md</code></p>
     </section>
 
     <section class="card">
@@ -56,11 +66,17 @@
       {% for rnd in result.debate.rounds %}
       <article class="round">
         <h3>Round {{ rnd.round }}</h3>
-        <p class="muted">Judge score {{ rnd.judgment.score }} · continue={{ rnd.judgment.continue }}</p>
-        <h4>Advocate</h4>
-        <pre class="prose">{{ rnd.advocate }}</pre>
-        <h4>Skeptic</h4>
-        <pre class="prose">{{ rnd.skeptic }}</pre>
+        <p class="muted">Judge score {{ rnd.judgment.score }}</p>
+        <div class="debate-grid">
+          <div>
+            <h4>Advocate</h4>
+            <pre class="prose">{{ rnd.advocate }}</pre>
+          </div>
+          <div>
+            <h4>Skeptic</h4>
+            <pre class="prose">{{ rnd.skeptic }}</pre>
+          </div>
+        </div>
       </article>
       {% endfor %}
     </section>
