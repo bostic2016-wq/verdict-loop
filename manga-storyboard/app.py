@@ -21,7 +21,16 @@ from pipeline.export import export_zip
 from pipeline.pdf_ingest import extract_transcript
 from pipeline.router import DirectorRouter, ProviderError
 from pipeline.run import generate_batch, regenerate_one
-from pipeline.style_library import add_drawing, load_library, remove_drawing
+from pipeline.style_library import (
+    add_drawing,
+    load_character_map,
+    load_library,
+    merge_saved_characters,
+    remove_drawing,
+    resolve_ref_path,
+    save_character_map,
+    upsert_character,
+)
 from pipeline.util import list_styles, load_settings, new_run_dir, save_json
 
 st.set_page_config(page_title="Manga Storyboard", page_icon="📖", layout="wide")
@@ -76,21 +85,24 @@ def router() -> DirectorRouter:
 
 # ---------- Sidebar: style library ----------
 with st.sidebar:
-    st.header("Style library")
-    st.caption("Your drawings — used as character/style references.")
+    st.header("Character library")
+    st.caption("Upload a drawing + name it once. The app remembers the character forever — even after refresh.")
     uploads = st.file_uploader(
         "Add drawings",
         type=["png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
         key="lib_upload",
     )
-    character = st.text_input("Character name (optional)", key="lib_char")
+    character = st.text_input("Character name", key="lib_char", placeholder="e.g. Kaito")
     tags_raw = st.text_input("Tags (comma-separated)", key="lib_tags")
-    if st.button("Save to library", use_container_width=True) and uploads:
+    if st.button("Save to library", type="primary", use_container_width=True) and uploads:
         tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
         for f in uploads:
             add_drawing(f.getvalue(), filename=f.name, tags=tags, character=character)
-        st.success(f"Saved {len(uploads)} drawing(s)")
+            if character.strip():
+                # Remember this character ↔ drawing mapping permanently
+                upsert_character(character, ref=f.name)
+        st.success(f"Saved {len(uploads)} drawing(s)" + (f" as **{character}**" if character.strip() else ""))
         st.rerun()
 
     items = load_library()
@@ -98,7 +110,8 @@ with st.sidebar:
         for item in items:
             cols = st.columns([3, 1])
             with cols[0]:
-                st.caption(f"**{item.get('character') or 'untagged'}** — {item.get('original_name')}")
+                label = item.get("character") or "untagged"
+                st.caption(f"**{label}** — {item.get('original_name')}")
                 if Path(item["path"]).exists():
                     st.image(item["path"], use_container_width=True)
             with cols[1]:
@@ -106,7 +119,14 @@ with st.sidebar:
                     remove_drawing(item["id"])
                     st.rerun()
     else:
-        st.info("No drawings yet. Optional but helps character consistency.")
+        st.info("No drawings yet. Upload one per character — it becomes their permanent reference.")
+
+    saved_chars = load_character_map()
+    if saved_chars:
+        with st.expander(f"Remembered characters ({len(saved_chars)})"):
+            for sc in saved_chars:
+                has_ref = "🖼️" if resolve_ref_path(sc.get("ref")) or resolve_ref_path(sc.get("name")) else "—"
+                st.caption(f"{has_ref} **{sc.get('name')}** {('· ' + sc.get('look', '')[:60]) if sc.get('look') else ''}")
 
     st.divider()
     import os
@@ -114,7 +134,7 @@ with st.sidebar:
     mock = st.checkbox(
         "Mock images (no API spend)",
         value=False,
-        help="OFF = real FLUX images via OpenRouter. ON = black placeholder panels only.",
+        help="OFF = real panels (Nano Banana Pro → GPT Image). ON = placeholder panels only.",
     )
     if mock:
         settings.setdefault("models", {})["image_backend"] = "mock"
@@ -125,7 +145,7 @@ with st.sidebar:
         os.environ.pop("MANGA_MOCK_IMAGES", None)
         os.environ.pop("MANGA_FORCE_MOCK", None)
         settings.setdefault("models", {})["image_backend"] = "openrouter"
-        st.caption("Image backend: OpenRouter FLUX (real panels)")
+        st.caption("Image backend: Nano Banana Pro → GPT Image (character refs on)")
 
     try:
         from pipeline.generate import IMAGE_PIPELINE_BUILD
@@ -140,6 +160,20 @@ st.title("Manga Storyboard")
 st.caption("PDF → analyze → brief → 5-panel pilot → lock & continue. Editorial QA built in.")
 
 step = st.session_state.step
+
+# Step progress indicator
+_STEPS = [("intake", "1 · Script"), ("brief", "2 · Brief"), ("pilot", "3 · Pilot"), ("continue", "4 · Continue")]
+_current = next((i for i, (k, _) in enumerate(_STEPS) if k == step), 0)
+_ind_cols = st.columns(len(_STEPS))
+for i, (key, label) in enumerate(_STEPS):
+    with _ind_cols[i]:
+        if i < _current:
+            st.markdown(f"✅ ~~{label}~~")
+        elif i == _current:
+            st.markdown(f"**🔵 {label}**")
+        else:
+            st.markdown(f"<span style='color:gray'>○ {label}</span>", unsafe_allow_html=True)
+st.divider()
 
 # ============================================================
 # STEP 1 — Intake
@@ -238,6 +272,7 @@ elif step == "brief":
         st.text_area("First-5 focus", value=analysis.get("first_five_focus") or "", disabled=True, height=100)
 
     st.markdown("**Characters**")
+    st.caption("Mapped drawings are sent to the image model as reference art — and remembered across sessions.")
     maps = list(brief.get("character_maps") or [])
     lib_names = [i.get("original_name") or i["filename"] for i in load_library()]
     if not maps and analysis.get("characters"):
@@ -249,14 +284,22 @@ elif step == "brief":
             }
             for c in analysis["characters"]
         ]
+    # Overlay remembered characters (saved refs/looks survive refresh)
+    maps = merge_saved_characters(maps)
     new_maps = []
     for i, row in enumerate(maps):
-        cols = st.columns([2, 3, 3])
+        cols = st.columns([1, 2, 3, 3])
+        thumb = resolve_ref_path(row.get("ref")) or resolve_ref_path(row.get("name"))
         with cols[0]:
-            name = st.text_input("Name", value=row.get("name") or "", key=f"cn_{i}")
+            if thumb:
+                st.image(str(thumb), use_container_width=True)
+            else:
+                st.markdown("<div style='color:gray;text-align:center;padding-top:12px'>no ref</div>", unsafe_allow_html=True)
         with cols[1]:
-            look = st.text_input("Look", value=row.get("look") or "", key=f"cl_{i}")
+            name = st.text_input("Name", value=row.get("name") or "", key=f"cn_{i}")
         with cols[2]:
+            look = st.text_input("Look", value=row.get("look") or "", key=f"cl_{i}")
+        with cols[3]:
             options = ["(none)"] + lib_names
             current = row.get("ref") or "(none)"
             idx = options.index(current) if current in options else 0
@@ -322,6 +365,8 @@ elif step == "brief":
     go1, go2 = st.columns(2)
     with go1:
         if st.button("Generate 5-panel pilot", type="primary", use_container_width=True):
+            # Remember this cast permanently (survives refresh / new scripts)
+            save_character_map(merge_saved_characters(brief.get("character_maps") or []))
             bible = build_bible(brief, aesthetic=brief.get("aesthetic"), analysis=analysis)
             run_dir = new_run_dir()
             save_json(run_dir / "analysis.json", analysis)

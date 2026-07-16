@@ -31,21 +31,32 @@ def critique_panel(
     *,
     prior_notes: str = "",
     pass_score: float = 0.7,
+    reference_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     cast = resolve_panel_characters(bible, panel)
     required = ", ".join(f"{c['name']} ({c['look']})" for c in cast) or "(none listed)"
+    refs = [Path(p) for p in (reference_paths or []) if Path(p).exists()][:3]
+    user_msg = VISION_USER.format(
+        bible_excerpt=bible_excerpt(bible),
+        panel=str(panel),
+        required_cast=required,
+        prior=prior_notes or "(first panel)",
+        pass_score=pass_score,
+    )
+    if refs:
+        ref_names = [c["name"] for c in cast if c.get("ref_path")]
+        user_msg += (
+            f"\n\nIMAGE 1 is the generated panel. Images 2+ are the artist's OWN reference drawings "
+            f"of: {', '.join(ref_names)}. Judge character likeness against these references — "
+            f"face, hairstyle, outfit must match. Score character_presence below 1.0 if a character "
+            f"is missing OR clearly off-model versus their reference."
+        )
     try:
         raw = router.complete_vision(
             "vision_critic",
             VISION_SYSTEM,
-            VISION_USER.format(
-                bible_excerpt=bible_excerpt(bible),
-                panel=str(panel),
-                required_cast=required,
-                prior=prior_notes or "(first panel)",
-                pass_score=pass_score,
-            ),
-            image_path,
+            user_msg,
+            [image_path, *refs],
             json_mode=True,
         )
         critique = parse_json(raw)
@@ -115,6 +126,7 @@ def generate_with_qa(
             rewrite_notes=rewrite,
             use_llm=use_llm_prompt,
         )
+        ref_paths = [Path(p) for p in (compiled.get("reference_paths") or [])]
         path = out_path.with_name(f"{out_path.stem}_a{attempt}{out_path.suffix}")
         generate_fn(
             settings,
@@ -122,6 +134,7 @@ def generate_with_qa(
             compiled["negative_prompt"],
             path,
             seed=1000 + int(panel.get("index", 0) or 0) * 10 + attempt,
+            reference_paths=ref_paths,
         )
 
         if not enabled:
@@ -137,7 +150,13 @@ def generate_with_qa(
             }
 
         critique = critique_panel(
-            router, bible, panel, path, prior_notes=prior_notes, pass_score=pass_score
+            router,
+            bible,
+            panel,
+            path,
+            prior_notes=prior_notes,
+            pass_score=pass_score,
+            reference_paths=ref_paths,
         )
         record = {
             "path": str(path),

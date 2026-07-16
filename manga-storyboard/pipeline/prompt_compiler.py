@@ -23,8 +23,10 @@ def _bible_char(bible: dict[str, Any], name: str) -> dict[str, Any] | None:
     return None
 
 
-def resolve_panel_characters(bible: dict[str, Any], panel: dict[str, Any]) -> list[dict[str, str]]:
-    """Build ordered character list that MUST appear in the panel."""
+def resolve_panel_characters(bible: dict[str, Any], panel: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build ordered character list that MUST appear in the panel (with ref image paths)."""
+    from pipeline.style_library import resolve_ref_path
+
     names = list(panel.get("characters") or [])
     # Also pull names mentioned in subject/action/dialogue that exist in the bible
     blob = " ".join(
@@ -47,14 +49,50 @@ def resolve_panel_characters(bible: dict[str, Any], panel: dict[str, Any]) -> li
         seen.add(key)
         match = _bible_char(bible, name)
         look = (match.get("look") if match else "") or "distinct manga character"
-        resolved.append({"name": match.get("name") if match else name, "look": look})
+        ref = match.get("ref") if match else None
+        ref_path = resolve_ref_path(ref) or resolve_ref_path(name)
+        resolved.append(
+            {
+                "name": match.get("name") if match else name,
+                "look": look,
+                "ref_path": str(ref_path) if ref_path else None,
+            }
+        )
     return resolved
 
 
-def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[str, str]:
-    """Deterministic compiler — prioritizes full character cast visibility."""
+def collect_reference_paths(cast: list[dict[str, Any]]) -> list[Any]:
+    """Ordered, deduped ref image paths for this panel's cast."""
+    from pathlib import Path
+
+    out: list[Path] = []
+    seen: set[str] = set()
+    for c in cast:
+        rp = c.get("ref_path")
+        if rp and rp not in seen:
+            seen.add(rp)
+            path = Path(rp)
+            if path.exists():
+                out.append(path)
+    return out
+
+
+def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[str, Any]:
+    """Deterministic compiler — prioritizes full character cast visibility + ref binding."""
     cast = resolve_panel_characters(bible, panel)
     n = len(cast)
+
+    # Bind each reference image (in payload order) to its character by name
+    ref_lines = []
+    ref_idx = 0
+    for c in cast:
+        if c.get("ref_path"):
+            ref_idx += 1
+            ref_lines.append(
+                f"reference image {ref_idx} is {c['name']} — draw {c['name']} with EXACTLY this "
+                f"character design: same face, same hairstyle, same outfit, same proportions"
+            )
+    ref_block = ". ".join(ref_lines)
 
     if n == 0:
         cast_block = "characters as implied by the scene"
@@ -75,6 +113,7 @@ def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[s
         (bible.get("style_positive") or "").replace("\n", " ").strip(),
         "single manga panel, no collage, no comic page layout, no borders",
         count_line,
+        ref_block,
         f"required cast: {cast_block}",
         f"shot: {panel.get('shot_type', 'medium')}",
         f"subject: {panel.get('subject', '')}",
@@ -99,7 +138,11 @@ def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[s
         ]
         if p
     )
-    return {"prompt": positive, "negative_prompt": negatives}
+    return {
+        "prompt": positive,
+        "negative_prompt": negatives,
+        "reference_paths": [str(p) for p in collect_reference_paths(cast)],
+    }
 
 
 def compile_prompt(
@@ -117,6 +160,8 @@ def compile_prompt(
 
     if not use_llm or router is None:
         return local
+
+    reference_paths = local.get("reference_paths") or []
 
     import json
 
@@ -147,6 +192,7 @@ def compile_prompt(
         return {
             "prompt": prompt,
             "negative_prompt": data.get("negative_prompt") or local["negative_prompt"],
+            "reference_paths": reference_paths,
         }
     except Exception:  # noqa: BLE001
         return local

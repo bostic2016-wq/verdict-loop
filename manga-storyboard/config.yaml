@@ -1,9 +1,14 @@
 models:
   director: openrouter/anthropic/claude-sonnet-4
   vision_critic: openrouter/google/gemini-2.5-flash
-  # openrouter = FLUX via OpenRouter (uses OPENROUTER_API_KEY)
+  # openrouter = Images API via OpenRouter (uses OPENROUTER_API_KEY)
   image_backend: openrouter
-  image_model: black-forest-labs/flux.2-pro
+  # Tried in order — Nano Banana Pro first (best multi-reference character
+  # fidelity), GPT Image 2 second, FLUX as the cheap tail.
+  image_model_chain:
+    - google/gemini-3-pro-image
+    - openai/gpt-image-2
+    - black-forest-labs/flux.2-pro
 
 openrouter:
   image_url: https://openrouter.ai/api/v1/images

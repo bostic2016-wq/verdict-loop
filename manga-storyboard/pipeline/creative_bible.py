@@ -39,6 +39,14 @@ def build_bible(
                 }
             )
 
+    # Fill any missing looks/refs from the persistent character library
+    try:
+        from pipeline.style_library import merge_saved_characters
+
+        characters = merge_saved_characters(characters)
+    except Exception:  # noqa: BLE001 — library optional
+        pass
+
     do_not = list(brief.get("do_not") or [])
     for required in ("photoreal", "speech bubbles in image", "watermarks", "extra unasked text"):
         if required not in do_not:
