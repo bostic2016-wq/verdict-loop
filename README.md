@@ -4,6 +4,25 @@ A free multi-model harness: **research → debate → verdict**, then optional *
 
 No paid OpenRouter required. Text uses free Groq + Gemini keys. Images use Pollinations Flux.
 
+## Public demo (like a hosted tool)
+
+Your site-builder demos are static pages on GitHub Pages. Verdict Loop needs a live server, so we host the **usable app** with [Streamlit Community Cloud](https://share.streamlit.io/) (free, connects to this GitHub repo).
+
+1. Go to [share.streamlit.io](https://share.streamlit.io/) and sign in with GitHub (`bostic2016-wq`)
+2. **New app** → repo `bostic2016-wq/verdict-loop` → branch `main` → Main file `streamlit_app.py`
+3. Under **Advanced settings → Secrets**, paste:
+
+```toml
+GROQ_API_KEY = "your-groq-key"
+GEMINI_API_KEY = "your-gemini-key"
+# Optional: lock the public page
+# APP_PASSWORD = "pick-a-password"
+```
+
+4. Deploy — you’ll get a public URL like `https://verdict-loop-….streamlit.app`
+
+**Important:** anyone with that URL can burn your free API quota. Use `APP_PASSWORD` if you share the link widely.
+
 ## What it does
 
 1. **Scout** gathers structured research notes  
@@ -15,7 +34,7 @@ No paid OpenRouter required. Text uses free Groq + Gemini keys. Images use Polli
 
 Not for sports-bot work (by design). Use it on plans, launches, purchases, life decisions, etc.
 
-## Setup
+## Local setup
 
 ```bash
 cd "/Users/kevinbostic/Harness for opendoor "
@@ -45,13 +64,16 @@ Optional Scout material: `--context notes.txt` (links / pasted research).
 
 Outputs land in `outputs/runs/<id>/` (`result.json`, `report.md`, `images/`).
 
-## Web UI
+## Local web UIs
 
 ```bash
+# FastAPI UI
 python web_app.py
-```
+# → http://127.0.0.1:8000
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
+# Streamlit UI (same as public deploy)
+streamlit run streamlit_app.py
+```
 
 ## Config
 
@@ -64,9 +86,9 @@ When you later want OpenRouter, set `OPENROUTER_API_KEY` and change a role’s m
 | Role | Model |
 |------|--------|
 | Scout | Groq Llama 3.3 70B |
-| Advocate | Gemini 2.0 Flash |
+| Advocate | Gemini Flash (latest) |
 | Skeptic | Groq Llama 3.1 8B |
-| Judge | Gemini 2.0 Flash |
-| Promoter | Gemini 2.0 Flash |
+| Judge | Groq Llama 3.3 70B |
+| Promoter | Gemini Flash (latest) |
 | Image Gen | Pollinations Flux |
-| Image Critic | Gemini 2.0 Flash (vision) |
+| Image Critic | Gemini Flash (vision) |
