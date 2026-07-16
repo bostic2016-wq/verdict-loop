@@ -10,10 +10,10 @@ Runs on **OpenRouter** — one API key. Free Groq/Gemini keys act as fallback.
 
 | Role | Model | Provider |
 |------|-------|----------|
-| Scout | GPT-5 mini | OpenAI |
-| Advocate | Grok 4.20 | xAI |
+| Scout | GPT-5.4 mini | OpenAI |
+| Advocate | Grok 4.5 | xAI |
 | Skeptic | Gemini 2.5 Flash | Google |
-| Judge | Claude Sonnet 5 | Anthropic |
+| Judge | Claude Fable 5 | Anthropic |
 | Promoter | Gemini 2.5 Flash | Google |
 | Image Critic | Gemini 2.5 Flash (vision) | Google |
 | Image Gen | FLUX.2 Pro | Black Forest Labs |

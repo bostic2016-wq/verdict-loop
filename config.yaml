@@ -17,35 +17,73 @@ creative:
 
 models:
   # OpenRouter lineup (one key, per-role models). IDs verified against the live catalog.
-  scout: openrouter/openai/gpt-5-mini
-  advocate: openrouter/x-ai/grok-4.20
+  scout: openrouter/openai/gpt-5.4-mini
+  advocate: openrouter/x-ai/grok-4.5
   # Different family from Scout so debate contrast isn't Advocate-only
   skeptic: openrouter/google/gemini-2.5-flash
-  judge: openrouter/anthropic/claude-sonnet-5
+  judge: openrouter/anthropic/claude-fable-5
   promoter: openrouter/google/gemini-2.5-flash
   image_critic: openrouter/google/gemini-2.5-flash
   image_model: black-forest-labs/flux.2-pro
 
 # Full chat + debate picker roster (OpenRouter litellm ids)
 chat_models:
+  # Frontier / latest
+  - id: claude-fable-5
+    label: Claude Fable 5
+    model: openrouter/anthropic/claude-fable-5
+    role: judge
+  - id: grok-4.5
+    label: Grok 4.5
+    model: openrouter/x-ai/grok-4.5
+    role: advocate
+  - id: gpt-5.6-luna
+    label: GPT-5.6 Luna
+    model: openrouter/openai/gpt-5.6-luna
+  - id: gpt-5.6-terra
+    label: GPT-5.6 Terra
+    model: openrouter/openai/gpt-5.6-terra
+  - id: gpt-5.6-sol
+    label: GPT-5.6 Sol
+    model: openrouter/openai/gpt-5.6-sol
+  - id: gpt-5.5
+    label: GPT-5.5
+    model: openrouter/openai/gpt-5.5
+  - id: gpt-5.4
+    label: GPT-5.4
+    model: openrouter/openai/gpt-5.4
+  - id: gpt-5.4-mini
+    label: GPT-5.4 mini
+    model: openrouter/openai/gpt-5.4-mini
+    role: scout
+  - id: gpt-5.2
+    label: GPT-5.2
+    model: openrouter/openai/gpt-5.2
+  - id: gpt-5
+    label: GPT-5
+    model: openrouter/openai/gpt-5
+  - id: o3
+    label: o3
+    model: openrouter/openai/o3
+  - id: o3-pro
+    label: o3 Pro
+    model: openrouter/openai/o3-pro
+  # Strong mid / prior lineup
   - id: claude-sonnet-5
     label: Claude Sonnet 5
     model: openrouter/anthropic/claude-sonnet-5
-    role: judge
-  - id: claude-opus-4
-    label: Claude Opus 4
-    model: openrouter/anthropic/claude-opus-4
+  - id: claude-opus-4.8
+    label: Claude Opus 4.8
+    model: openrouter/anthropic/claude-opus-4.8
+  - id: grok-4.3
+    label: Grok 4.3
+    model: openrouter/x-ai/grok-4.3
   - id: grok-4.20
     label: Grok 4.20
     model: openrouter/x-ai/grok-4.20
-    role: advocate
   - id: gpt-5-mini
     label: GPT-5 mini
     model: openrouter/openai/gpt-5-mini
-    role: scout
-  - id: gpt-4o
-    label: GPT-4o
-    model: openrouter/openai/gpt-4o
   - id: o3-mini
     label: o3-mini
     model: openrouter/openai/o3-mini

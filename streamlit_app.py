@@ -349,10 +349,10 @@ def _gate() -> bool:
 _LOGO_DIR = Path(__file__).resolve().parent / "web" / "static" / "logos"
 
 _MODEL_STRIP = (
-    ("openai", "OpenAI", "Scout · GPT-5 mini"),
-    ("xai", "xAI", "Advocate · Grok 4.20"),
+    ("anthropic", "Anthropic", "Judge · Claude Fable 5"),
+    ("xai", "xAI", "Advocate · Grok 4.5"),
+    ("openai", "OpenAI", "Scout · GPT-5.4 mini"),
     ("google", "Google", "Skeptic · Gemini 2.5 Flash"),
-    ("anthropic", "Anthropic", "Judge · Claude Sonnet 5"),
     ("bfl", "Black Forest Labs", "Images · FLUX.2 Pro"),
 )
 
@@ -543,10 +543,10 @@ def _model_picker_ui() -> tuple[list[str], dict[str, str]]:
     st.session_state["v4_model_ids"] = selected
 
     role_defaults = {
-        "scout": "gpt-5-mini",
-        "advocate": "grok-4.20",
+        "scout": "gpt-5.4-mini",
+        "advocate": "grok-4.5",
         "skeptic": "gemini-2.5-flash",
-        "judge": "claude-sonnet-5",
+        "judge": "claude-fable-5",
     }
     for role, default_id in list(role_defaults.items()):
         if default_id not in id_to_model and all_ids:
