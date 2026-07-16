@@ -41,6 +41,25 @@ OPENROUTER_API_KEY = "sk-or-your-key"
 
 **Important:** anyone with that URL spends your OpenRouter credits. Set `APP_PASSWORD` if you share the link widely.
 
+### Manga Storyboard (separate app / separate URL)
+
+The manga tool lives in the same repo but must be deployed as a **second** Streamlit app so it does **not** reuse the Verdict Loop link:
+
+1. [share.streamlit.io](https://share.streamlit.io/) → **Create app** (do not edit the Verdict Loop app)
+2. Repository: `bostic2016-wq/verdict-loop`
+3. Branch: `main`
+4. Main file path: `manga-storyboard/app.py`
+5. **Custom subdomain:** `manga-storyboard` → URL like `https://manga-storyboard.streamlit.app`
+6. Secrets (same OpenRouter key; optional `FAL_KEY` / `APP_PASSWORD`)
+
+```toml
+OPENROUTER_API_KEY = "sk-or-your-key"
+# FAL_KEY = "your-fal-key"
+# APP_PASSWORD = "pick-a-password"
+```
+
+Mock image mode is the default in `manga-storyboard/config.yaml` until you set a real image backend.
+
 ## What it does
 
 1. **Scout** gathers structured research notes

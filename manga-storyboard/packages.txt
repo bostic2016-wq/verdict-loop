@@ -1,0 +1,1 @@
+# pymupdf ships wheels; no system packages required for most Streamlit Cloud images
