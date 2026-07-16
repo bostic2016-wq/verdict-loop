@@ -77,6 +77,49 @@ class MockRouter:
             )
         return f"mock:{role}"
 
+    def complete_messages(
+        self,
+        role: str,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ) -> str:
+        self.calls.append(role)
+        last_user = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_user = str(m.get("content") or "")
+                break
+        return f"mock:{role}: {last_user[:120]}"
+
+    def complete_stream(
+        self,
+        role: str,
+        system: str,
+        user: str,
+        *,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ):
+        text = self.complete(
+            role, system, user, temperature=temperature, max_tokens=max_tokens
+        )
+        yield text
+
+    def complete_messages_stream(
+        self,
+        role: str,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ):
+        text = self.complete_messages(
+            role, messages, temperature=temperature, max_tokens=max_tokens
+        )
+        yield text
+
     def complete_vision(
         self,
         role: str,

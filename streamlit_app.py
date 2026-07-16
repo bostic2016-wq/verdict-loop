@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -36,7 +37,7 @@ from harness.pipeline import run_compare, run_pipeline  # noqa: E402
 from harness.templates import claim_for_label, template_labels  # noqa: E402
 
 st.set_page_config(
-    page_title="Verdict Loop v3.1",
+    page_title="Verdict Loop v4",
     page_icon="◆",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -302,7 +303,7 @@ def _gate() -> bool:
     st.markdown(
         '<div class="vl-hero"><div class="vl-brand-row">'
         '<p class="vl-brand">Verdict Loop</p>'
-        '<span class="vl-chip">v3.1 · Money + Follow-ups</span></div>'
+        '<span class="vl-chip">v4 · Multi-model chat</span></div>'
         '<h1 class="vl-title">Enter to continue</h1>'
         "<p class=\"vl-lede\">This public demo is password-protected.</p></div>",
         unsafe_allow_html=True,
@@ -320,10 +321,10 @@ _LOGO_DIR = Path(__file__).resolve().parent / "web" / "static" / "logos"
 
 # provider logo file, provider name, role caption — mirrors the config.yaml lineup
 _MODEL_STRIP = (
-    ("openai", "OpenAI", "Scout + Skeptic · GPT-5 mini"),
+    ("openai", "OpenAI", "Scout · GPT-5 mini"),
     ("xai", "xAI", "Advocate · Grok 4.20"),
+    ("google", "Google", "Skeptic · Gemini 2.5 Flash"),
     ("anthropic", "Anthropic", "Judge · Claude Sonnet 5"),
-    ("google", "Google", "Promo + Critic · Gemini 2.5 Flash"),
     ("bfl", "Black Forest Labs", "Images · FLUX.2 Pro"),
 )
 
@@ -457,88 +458,183 @@ def _render_money_facts(result: dict) -> None:
 
 
 def _ask_followup(result: dict, detail_used: str) -> None:
-    from harness.config import load_settings
-    from harness.followup import (
-        answer_followup,
-        append_followup,
-        suggested_followups,
+    """v4 multi-model chat grounded in the latest verdict."""
+    from harness.chat import (
+        append_turn,
+        ask_models_events,
+        create_chat,
+        default_chat_catalog,
+        label_for,
     )
+    from harness.config import load_settings
+    from harness.followup import suggested_followups
     from harness.router import ModelRouter
 
+    settings = load_settings()
+    catalog = default_chat_catalog(settings)
+    id_to_label = {m["id"]: m["label"] for m in catalog}
+    default_ids = [m["id"] for m in catalog[:2]]
+
     st.markdown("---")
-    st.markdown("### Ask a follow-up")
+    st.markdown("### Multi-model chat")
     st.caption(
-        "Pick a suggested question or type your own. "
-        "Memory lasts for this browser session."
+        "Ask one or more models side-by-side. Answers stream in parallel and "
+        "stay grounded in this verdict."
     )
 
-    for msg in st.session_state.get("followup_messages") or []:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
+    # Ensure a chat session exists for this result
+    chat_key = "v4_chat"
+    chat_id_key = "v4_chat_id"
+    if st.session_state.get("v4_chat_run_dir") != (
+        result.get("run_dir")
+        or (result.get("result_a") or {}).get("run_dir")
+    ):
+        st.session_state.pop(chat_key, None)
+        st.session_state.pop(chat_id_key, None)
+
+    selected = st.multiselect(
+        "Models",
+        options=[m["id"] for m in catalog],
+        default=st.session_state.get("v4_model_ids") or default_ids,
+        format_func=lambda mid: id_to_label.get(mid, mid),
+        key="v4_model_multiselect",
+    )
+    st.session_state["v4_model_ids"] = selected
+
+    if not st.session_state.get(chat_key):
+        chat = create_chat(
+            settings,
+            model_ids=selected or default_ids,
+            run_result=result,
+            detail=detail_used,
+        )
+        st.session_state[chat_key] = chat
+        st.session_state[chat_id_key] = chat["id"]
+        st.session_state["v4_chat_run_dir"] = chat.get("run_dir")
+    else:
+        chat = st.session_state[chat_key]
+        # Keep selected models in sync for the next turn
+        catalog_by_id = {m["id"]: m for m in catalog}
+        chat["models"] = [
+            catalog_by_id[mid] for mid in selected if mid in catalog_by_id
+        ] or chat.get("models") or []
+
+    # History
+    for msg in chat.get("messages") or []:
+        if msg.get("role") == "user":
+            with st.chat_message("user"):
+                st.write(msg.get("content") or "")
+        elif msg.get("role") == "assistant":
+            replies = msg.get("replies") or {}
+            if not replies and msg.get("content"):
+                with st.chat_message("assistant"):
+                    st.write(msg["content"])
+            else:
+                cols = st.columns(max(1, len(replies)))
+                for i, (mid, text) in enumerate(replies.items()):
+                    with cols[i % len(cols)]:
+                        st.markdown(f"**{label_for(chat, mid)}**")
+                        st.write(text)
 
     suggestions = suggested_followups(result)
     options = ["(type your own below)"] + suggestions
     picked = st.selectbox(
-        "Suggested follow-ups",
+        "Suggested questions",
         options,
         index=0,
         key="followup_select",
     )
     custom = st.text_input(
-        "Your follow-up question",
+        "Your question",
         placeholder="e.g. Recalculate my after-tax take-home…",
         key="followup_text",
     )
 
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
-        ask = st.button("Ask follow-up", type="primary")
+        ask = st.button("Ask models", type="primary")
     with c2:
         clear = st.button("Clear chat")
     with c3:
         st.write("")
 
     if clear:
-        st.session_state["followup_messages"] = []
+        chat = create_chat(
+            settings,
+            model_ids=selected or default_ids,
+            run_result=result,
+            detail=detail_used,
+        )
+        st.session_state[chat_key] = chat
+        st.session_state[chat_id_key] = chat["id"]
         st.rerun()
 
     question = (custom or "").strip()
     if not question and picked and not picked.startswith("("):
         question = picked
 
-    # Also support the sticky chat bar if present
     chat_q = st.chat_input("Or ask here about this verdict…")
     if chat_q:
         question = chat_q.strip()
         ask = True
 
     if ask and question:
-        history = list(st.session_state.get("followup_messages") or [])
-        history.append({"role": "user", "content": question})
+        if not selected:
+            st.warning("Pick at least one model.")
+            return
+        # Sync models onto chat before asking
+        catalog_by_id = {m["id"]: m for m in catalog}
+        chat["models"] = [catalog_by_id[mid] for mid in selected if mid in catalog_by_id]
+
+        with st.chat_message("user"):
+            st.write(question)
+
+        placeholders: dict[str, Any] = {}
+        buffers: dict[str, str] = {mid: "" for mid in selected}
+        cols = st.columns(max(1, len(selected)))
+        for i, mid in enumerate(selected):
+            with cols[i]:
+                st.markdown(f"**{id_to_label.get(mid, mid)}**")
+                placeholders[mid] = st.empty()
+                placeholders[mid].caption("Thinking…")
+
         try:
-            router = ModelRouter(load_settings())
-            answer = answer_followup(
-                router,
-                result,
-                question,
-                history[:-1],
-                detail=detail_used,
-            )
+            router = ModelRouter(settings)
+            for event, mid, payload in ask_models_events(
+                router, chat, question, model_ids=selected
+            ):
+                if event == "chunk":
+                    buffers[mid] = buffers.get(mid, "") + payload
+                    placeholders[mid].write(buffers[mid])
+                elif event == "error":
+                    buffers[mid] = f"Error: {payload}"
+                    placeholders[mid].error(buffers[mid])
+                elif event == "done" and mid in placeholders:
+                    placeholders[mid].write(buffers.get(mid) or "")
         except Exception as exc:
-            answer = f"Couldn’t answer that follow-up: {exc}"
-        history.append({"role": "assistant", "content": answer})
-        st.session_state["followup_messages"] = history
+            st.error(f"Couldn’t answer: {exc}")
+            return
+
+        chat = append_turn(settings, chat, question, buffers)
+        st.session_state[chat_key] = chat
+        # Also mirror into legacy followups.json for the run
         run_dir = result.get("run_dir") or (
             (result.get("result_a") or {}).get("run_dir")
         )
         if run_dir:
             try:
-                append_followup(run_dir, question, answer)
+                from harness.followup import append_followup
+
+                summary = "\n\n".join(
+                    f"**{id_to_label.get(mid, mid)}:** {text}"
+                    for mid, text in buffers.items()
+                )
+                append_followup(run_dir, question, summary)
             except Exception:
                 pass
         st.rerun()
     elif ask and not question:
-        st.warning("Pick a suggestion or type a follow-up question.")
+        st.warning("Pick a suggestion or type a question.")
 
 
 def main() -> None:
@@ -550,20 +646,20 @@ def main() -> None:
         <div class="vl-hero">
           <div class="vl-brand-row">
             <p class="vl-brand">Verdict Loop</p>
-            <span class="vl-chip">v3.1 · Money + Follow-ups</span>
+            <span class="vl-chip">v4 · Multi-model chat</span>
           </div>
-          <div class="vl-banner"><strong>Fix</strong> Verified tax math · Suggested follow-up dropdown</div>
-          <h1 class="vl-title">Stress-test a plan.<br/><em>Ask follow-ups.</em></h1>
+          <div class="vl-banner"><strong>New</strong> Side-by-side streaming chat · Parallel compare · Gemini skeptic</div>
+          <h1 class="vl-title">Stress-test a plan.<br/><em>Chat with the models.</em></h1>
           <p class="vl-lede">
-            Brief by default. Compare two plans. Keep chatting about the verdict
-            with session memory — no wall of text unless you ask for Detailed.
+            Brief by default. Compare two plans in parallel. Then ask Claude, Grok,
+            GPT, and Gemini side-by-side — grounded in the verdict.
           </p>
         </div>
         <div class="vl-steps">
           <div class="vl-step"><strong>1 · Scout</strong>Maps risks & unknowns</div>
           <div class="vl-step"><strong>2 · Debate</strong>Advocate vs Skeptic</div>
           <div class="vl-step"><strong>3 · Judge</strong>Do / don’t / only if</div>
-          <div class="vl-step"><strong>4 · Follow-up</strong>Ask about the answer</div>
+          <div class="vl-step"><strong>4 · Chat</strong>Multi-model follow-up</div>
         </div>
         """
         + _model_strip_html(),
@@ -625,10 +721,10 @@ def main() -> None:
             "Add **OPENROUTER_API_KEY** in Streamlit Cloud → Settings → Secrets."
         )
     else:
-        st.caption("OpenRouter ready · Brief default · Memory on")
+        st.caption("OpenRouter ready · v4 multi-model chat · Parallel compare")
 
     run = st.button(
-        "Run Verdict Loop v3",
+        "Run Verdict Loop v4",
         type="primary",
         disabled=not can_run or not has_keys,
     )
@@ -647,25 +743,23 @@ def main() -> None:
                 "promoter_start": ("Writing promo…", 0.8),
                 "image_gen_start": ("Generating images…", 0.88),
                 "image_critic_start": ("QA-checking images…", 0.94),
-                "a_scout_start": ("Plan A · researching…", 0.1),
-                "a_judge_start": ("Plan A · judging…", 0.35),
-                "a_run_done": ("Plan A done · starting Plan B…", 0.45),
-                "b_scout_start": ("Plan B · researching…", 0.55),
-                "b_judge_start": ("Plan B · judging…", 0.8),
+                "a_scout_start": ("Plan A · researching…", 0.15),
+                "a_judge_start": ("Plan A · judging…", 0.4),
+                "b_scout_start": ("Plan B · researching…", 0.15),
+                "b_judge_start": ("Plan B · judging…", 0.4),
+                "a_run_done": ("Plan A done…", 0.7),
+                "b_run_done": ("Plan B done…", 0.7),
                 "run_done": ("Done", 1.0),
-                "b_run_done": ("Done", 1.0),
             }
-            # Strip a_/b_ prefixes for generic matches
-            key = event
-            if event not in labels_map and "_" in event:
-                # a_scout_start already listed; fall back
-                pass
             if event in labels_map:
                 text, pct = labels_map[event]
                 progress.progress(pct, text=text)
                 status.caption(text)
 
-        with st.spinner("Running…" + (" compare can take a few minutes" if mode == "Compare" else "")):
+        with st.spinner(
+            "Running…"
+            + (" plans A & B in parallel" if mode == "Compare" else "")
+        ):
             try:
                 if mode == "Compare":
                     result = run_compare(
@@ -689,6 +783,10 @@ def main() -> None:
         st.session_state["last_result"] = result
         st.session_state["followup_messages"] = []
         st.session_state["detail_used"] = detail
+        # Reset chat for new run
+        st.session_state.pop("v4_chat", None)
+        st.session_state.pop("v4_chat_id", None)
+        st.session_state.pop("v4_chat_run_dir", None)
 
     result = st.session_state.get("last_result")
     if not result:

@@ -19,17 +19,33 @@ models:
   # OpenRouter lineup (one key, per-role models). IDs verified against the live catalog.
   scout: openrouter/openai/gpt-5-mini
   advocate: openrouter/x-ai/grok-4.20
-  skeptic: openrouter/openai/gpt-5-mini
+  # Different family from Scout so debate contrast isn't Advocate-only
+  skeptic: openrouter/google/gemini-2.5-flash
   judge: openrouter/anthropic/claude-sonnet-5
   promoter: openrouter/google/gemini-2.5-flash
   image_critic: openrouter/google/gemini-2.5-flash
   image_model: black-forest-labs/flux.2-pro
 
+# v4 multi-model chat roster (role → models map above)
+chat_models:
+  - id: judge
+    label: Claude Sonnet 5
+    role: judge
+  - id: advocate
+    label: Grok 4.20
+    role: advocate
+  - id: scout
+    label: GPT-5 mini
+    role: scout
+  - id: skeptic
+    label: Gemini 2.5 Flash
+    role: skeptic
+
 fallback_models:
   # Free-tier safety net if OpenRouter is unreachable or out of credits
   scout: groq/llama-3.1-8b-instant
   advocate: groq/llama-3.1-8b-instant
-  skeptic: groq/llama-3.1-8b-instant
+  skeptic: gemini/gemini-flash-latest
   judge: gemini/gemini-flash-latest
   promoter: gemini/gemini-flash-latest
   image_critic: gemini/gemini-flash-latest

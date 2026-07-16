@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +82,7 @@ class ModelRouter:
         self.models: dict[str, str] = settings.get("models", {})
         self.fallbacks: dict[str, str] = settings.get("fallback_models", {})
         self._last_call_at = 0.0
+        self._pace_lock = threading.Lock()
         # LiteLLM reads GROQ_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY from environment.
 
     def model_for(self, role: str) -> str:
@@ -87,14 +90,22 @@ class ModelRouter:
             raise KeyError(f"No model configured for role: {role}")
         return self.models[role]
 
+    def _models_for_role(self, role: str) -> list[str]:
+        models_to_try = [self.model_for(role)]
+        fallback = self.fallbacks.get(role)
+        if fallback and fallback not in models_to_try:
+            models_to_try.append(fallback)
+        return models_to_try
+
     def _pace(self) -> None:
         """Small gap between calls so free tiers don't see a burst."""
-        gap = 0.8
-        now = time.time()
-        wait = gap - (now - self._last_call_at)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_call_at = time.time()
+        with self._pace_lock:
+            gap = 0.8
+            now = time.time()
+            wait = gap - (now - self._last_call_at)
+            if wait > 0:
+                time.sleep(wait)
+            self._last_call_at = time.time()
 
     def _call(self, kwargs: dict[str, Any], *, json_mode: bool) -> str:
         self._pace()
@@ -115,6 +126,90 @@ class ModelRouter:
             raise RuntimeError("Empty model response")
         return content
 
+    def _stream_call(self, kwargs: dict[str, Any]) -> Iterator[str]:
+        self._pace()
+        local = dict(kwargs)
+        local["stream"] = True
+        stream = litellm.completion(**local)
+        yielded = False
+        for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta
+                text = getattr(delta, "content", None) or ""
+            except Exception:
+                text = ""
+            if text:
+                yielded = True
+                yield text
+        if not yielded:
+            raise RuntimeError("Empty model stream")
+
+    def _try_models(
+        self,
+        models_to_try: list[str],
+        *,
+        role: str,
+        messages: list[dict[str, Any]],
+        json_mode: bool,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        last_exc: Exception | None = None
+        for model in models_to_try:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            for attempt in range(2):
+                try:
+                    return self._call(kwargs, json_mode=json_mode)
+                except Exception as exc:
+                    last_exc = exc
+                    msg = str(exc).lower()
+                    if any(x in msg for x in ("402", "insufficient credits", "payment required")):
+                        break
+                    if _is_retryable(exc) and attempt < 1:
+                        time.sleep(_retry_sleep_seconds(exc, attempt))
+                        continue
+                    break
+        assert last_exc is not None
+        raise _friendly_provider_error(last_exc, role, models_to_try[-1]) from last_exc
+
+    def _try_models_stream(
+        self,
+        models_to_try: list[str],
+        *,
+        role: str,
+        messages: list[dict[str, Any]],
+        temperature: float,
+        max_tokens: int,
+    ) -> Iterator[str]:
+        last_exc: Exception | None = None
+        for model in models_to_try:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            for attempt in range(2):
+                try:
+                    yield from self._stream_call(kwargs)
+                    return
+                except Exception as exc:
+                    last_exc = exc
+                    msg = str(exc).lower()
+                    if any(x in msg for x in ("402", "insufficient credits", "payment required")):
+                        break
+                    if _is_retryable(exc) and attempt < 1:
+                        time.sleep(_retry_sleep_seconds(exc, attempt))
+                        continue
+                    break
+        assert last_exc is not None
+        raise _friendly_provider_error(last_exc, role, models_to_try[-1]) from last_exc
+
     def complete(
         self,
         role: str,
@@ -125,38 +220,72 @@ class ModelRouter:
         temperature: float = 0.4,
         max_tokens: int | None = None,
     ) -> str:
-        models_to_try = [self.model_for(role)]
-        fallback = self.fallbacks.get(role)
-        if fallback and fallback not in models_to_try:
-            models_to_try.append(fallback)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        return self._try_models(
+            self._models_for_role(role),
+            role=role,
+            messages=messages,
+            json_mode=json_mode,
+            temperature=temperature,
+            max_tokens=max_tokens or (2048 if json_mode else 1024),
+        )
 
-        last_exc: Exception | None = None
-        for model in models_to_try:
-            kwargs: dict[str, Any] = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens or (2048 if json_mode else 1024),
-            }
-            # 1 quick retry on soft failures, then switch provider (incl. OpenRouter 402 → free tier)
-            for attempt in range(2):
-                try:
-                    return self._call(kwargs, json_mode=json_mode)
-                except Exception as exc:
-                    last_exc = exc
-                    msg = str(exc).lower()
-                    # Don't burn time retrying zero-credit OpenRouter — fall over immediately
-                    if any(x in msg for x in ("402", "insufficient credits", "payment required")):
-                        break
-                    if _is_retryable(exc) and attempt < 1:
-                        time.sleep(_retry_sleep_seconds(exc, attempt))
-                        continue
-                    break  # try fallback model
-        assert last_exc is not None
-        raise _friendly_provider_error(last_exc, role, models_to_try[-1]) from last_exc
+    def complete_messages(
+        self,
+        role: str,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ) -> str:
+        return self._try_models(
+            self._models_for_role(role),
+            role=role,
+            messages=messages,
+            json_mode=False,
+            temperature=temperature,
+            max_tokens=max_tokens or 1024,
+        )
+
+    def complete_stream(
+        self,
+        role: str,
+        system: str,
+        user: str,
+        *,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ) -> Iterator[str]:
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        yield from self._try_models_stream(
+            self._models_for_role(role),
+            role=role,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens or 1024,
+        )
+
+    def complete_messages_stream(
+        self,
+        role: str,
+        messages: list[dict[str, Any]],
+        *,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ) -> Iterator[str]:
+        yield from self._try_models_stream(
+            self._models_for_role(role),
+            role=role,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens or 1024,
+        )
 
     def complete_vision(
         self,

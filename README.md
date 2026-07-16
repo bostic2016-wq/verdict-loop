@@ -1,8 +1,8 @@
 # Verdict Loop
 
-A multi-model harness: **research → debate → verdict**, then optional **promo / images**, plus **follow-up chat** with session memory.
+A multi-model harness: **research → debate → verdict**, then optional **promo / images**, plus **v4 multi-model follow-up chat** (side-by-side streaming) with session memory.
 
-**v3 defaults:** Brief answers, images off, expandable full debate, compare two plans, starter templates.
+**v4 defaults:** Brief answers, images off, expandable full debate, parallel compare of two plans, multi-model chat (Claude / Grok / GPT / Gemini), starter templates.
 
 Runs on **OpenRouter** — one API key. Free Groq/Gemini keys act as fallback.
 
@@ -12,7 +12,7 @@ Runs on **OpenRouter** — one API key. Free Groq/Gemini keys act as fallback.
 |------|-------|----------|
 | Scout | GPT-5 mini | OpenAI |
 | Advocate | Grok 4.20 | xAI |
-| Skeptic | GPT-5 mini | OpenAI |
+| Skeptic | Gemini 2.5 Flash | Google |
 | Judge | Claude Sonnet 5 | Anthropic |
 | Promoter | Gemini 2.5 Flash | Google |
 | Image Critic | Gemini 2.5 Flash (vision) | Google |

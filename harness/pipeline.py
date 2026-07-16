@@ -130,7 +130,9 @@ def run_compare(
     on_progress: ProgressCb | None = None,
     detail: str = "brief",
 ) -> dict[str, Any]:
-    """Run two plans sequentially (images off) and pick a winner line."""
+    """Run two plans in parallel (images off) and pick a winner line."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     settings = load_settings(config_path)
     if not dry_run:
         require_text_keys(settings)
@@ -142,22 +144,35 @@ def run_compare(
 
         return _cb
 
-    result_a = run_pipeline(
-        claim_a,
-        with_images=False,
-        dry_run=dry_run,
-        config_path=config_path,
-        on_progress=tag("a"),
-        detail=detail,
-    )
-    result_b = run_pipeline(
-        claim_b,
-        with_images=False,
-        dry_run=dry_run,
-        config_path=config_path,
-        on_progress=tag("b"),
-        detail=detail,
-    )
+    result_a: dict[str, Any] | None = None
+    result_b: dict[str, Any] | None = None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_a = pool.submit(
+            run_pipeline,
+            claim_a,
+            with_images=False,
+            dry_run=dry_run,
+            config_path=config_path,
+            on_progress=tag("a"),
+            detail=detail,
+        )
+        fut_b = pool.submit(
+            run_pipeline,
+            claim_b,
+            with_images=False,
+            dry_run=dry_run,
+            config_path=config_path,
+            on_progress=tag("b"),
+            detail=detail,
+        )
+        for fut in as_completed([fut_a, fut_b]):
+            if fut is fut_a:
+                result_a = fut.result()
+            else:
+                result_b = fut.result()
+
+    assert result_a is not None and result_b is not None
 
     router: ModelRouter | MockRouter = (
         MockRouter(settings) if dry_run else ModelRouter(settings)
