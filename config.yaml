@@ -1,6 +1,8 @@
 debate:
   max_rounds: 2
+  brief_max_rounds: 1
   pass_score: 8
+  detail: brief
 
 creative:
   enabled: true

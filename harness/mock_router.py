@@ -48,6 +48,7 @@ class MockRouter:
                     "recommendation": "only_if",
                     "conditions": ["Ship a 4-week experiment", "Define a cancel rule"],
                     "reasoning": "Balanced case; proceed only with a short test.",
+                    "bottom_line": "Try a 4-week test with a clear cancel rule.",
                     "focus_questions": [],
                     "continue": False,
                 }

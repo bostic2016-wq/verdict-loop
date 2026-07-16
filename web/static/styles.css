@@ -1,15 +1,13 @@
 @import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap");
 
 :root {
-  --ink: #0c1222;
-  --muted: #5b6578;
-  --paper: #e7ecf4;
-  --panel: rgba(255, 255, 255, 0.88);
-  --accent: #1a6dff;
-  --accent-deep: #0f4fcc;
-  --warm: #f0a05a;
-  --sky: #3b82f6;
-  --line: rgba(12, 18, 34, 0.1);
+  --ink: #0e1218;
+  --muted: #5c6675;
+  --paper: #e8ebf0;
+  --panel: rgba(255, 255, 255, 0.9);
+  --accent: #0f9d8a;
+  --accent-deep: #0b7a6b;
+  --line: rgba(14, 18, 24, 0.1);
   --danger: #b42318;
   --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
   --sans: "Manrope", "Avenir Next", sans-serif;
@@ -25,10 +23,10 @@ body {
   color: var(--ink);
   font-family: var(--sans);
   background:
-    radial-gradient(ellipse 55% 45% at 8% -5%, rgba(26, 109, 255, 0.22) 0%, transparent 55%),
-    radial-gradient(ellipse 50% 40% at 95% 5%, rgba(240, 160, 90, 0.18) 0%, transparent 50%),
-    radial-gradient(ellipse 40% 35% at 70% 90%, rgba(26, 109, 255, 0.08) 0%, transparent 55%),
-    linear-gradient(165deg, #e9eef7 0%, #f2f4f8 48%, #e6ebf3 100%);
+    radial-gradient(ellipse 58% 46% at 0% 0%, rgba(15, 157, 138, 0.22) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 40% at 100% 5%, rgba(30, 58, 95, 0.14) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 35% at 60% 100%, rgba(15, 157, 138, 0.08) 0%, transparent 55%),
+    linear-gradient(168deg, #e6eaef 0%, #eef1f4 48%, #e2e7ed 100%);
   background-attachment: fixed;
 }
 
@@ -48,12 +46,12 @@ body {
   align-items: center;
   gap: 0.65rem;
   flex-wrap: wrap;
-  margin: 0 0 0.7rem;
+  margin: 0 0 0.55rem;
 }
 
 .brand {
   margin: 0;
-  font-size: clamp(1.65rem, 3.2vw, 2.15rem);
+  font-size: clamp(1.7rem, 3.4vw, 2.25rem);
   letter-spacing: -0.03em;
   color: var(--ink);
   font-weight: 800;
@@ -63,23 +61,45 @@ body {
 .chip {
   display: inline-flex;
   align-items: center;
-  font-size: 0.7rem;
-  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  font-weight: 700;
-  padding: 0.32rem 0.65rem;
+  font-weight: 800;
+  padding: 0.38rem 0.75rem;
   border-radius: 999px;
-  background: linear-gradient(135deg, #1a6dff, #3b82f6);
+  background: linear-gradient(135deg, #0f9d8a, #0b7a6b);
   color: #fff;
-  box-shadow: 0 6px 18px rgba(26, 109, 255, 0.28);
-  animation: pulse-soft 2.4s ease-in-out infinite;
+  box-shadow: 0 8px 22px rgba(15, 157, 138, 0.35);
+  animation: pulse-soft 2.2s ease-in-out infinite;
+}
+
+.banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0 0 0.85rem;
+  padding: 0.45rem 0.8rem;
+  border-radius: 12px;
+  background: rgba(15, 157, 138, 0.12);
+  border: 1px solid rgba(15, 157, 138, 0.28);
+  color: var(--accent-deep);
+  font-size: 0.82rem;
+  font-weight: 650;
+  animation: rise 0.55s ease-out both;
+}
+
+.banner strong {
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
 }
 
 h1 {
   margin: 0 0 0.7rem;
   font-family: var(--serif);
-  font-size: clamp(2.15rem, 5vw, 3.25rem);
-  line-height: 1.05;
+  font-size: clamp(2.2rem, 5.2vw, 3.35rem);
+  line-height: 1.04;
   font-weight: 400;
   letter-spacing: -0.02em;
 }
@@ -105,7 +125,7 @@ h1 em {
 }
 
 .step {
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.78);
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 0.7rem 0.75rem;
@@ -117,7 +137,7 @@ h1 em {
 
 .step:hover {
   transform: translateY(-2px);
-  border-color: rgba(26, 109, 255, 0.35);
+  border-color: rgba(15, 157, 138, 0.45);
 }
 
 .step strong {
@@ -149,7 +169,7 @@ h1 em {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  background: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.85);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.45rem 0.65rem;
@@ -158,7 +178,7 @@ h1 em {
 
 .model:hover {
   transform: translateY(-1px);
-  border-color: rgba(26, 109, 255, 0.4);
+  border-color: rgba(15, 157, 138, 0.45);
 }
 
 .model img {
@@ -190,7 +210,7 @@ h1 em {
   padding: 1.25rem 1.35rem;
   margin-bottom: 1rem;
   backdrop-filter: blur(12px);
-  box-shadow: 0 22px 48px rgba(12, 18, 34, 0.08);
+  box-shadow: 0 22px 48px rgba(14, 18, 24, 0.08);
   animation: rise 0.8s ease-out both;
 }
 
@@ -201,7 +221,8 @@ label {
   margin-bottom: 0.45rem;
 }
 
-textarea {
+textarea,
+select {
   width: 100%;
   resize: vertical;
   border: 1px solid var(--line);
@@ -224,14 +245,14 @@ button {
   appearance: none;
   border: 0;
   border-radius: 14px;
-  background: linear-gradient(135deg, #1a6dff, #0f4fcc);
+  background: linear-gradient(135deg, #0f9d8a, #0b7a6b);
   color: #fff;
   font: inherit;
   font-weight: 700;
   padding: 0.75rem 1.25rem;
   cursor: pointer;
   transition: transform 0.15s ease, filter 0.15s ease;
-  box-shadow: 0 10px 24px rgba(26, 109, 255, 0.28);
+  box-shadow: 0 10px 24px rgba(15, 157, 138, 0.3);
 }
 
 button:hover {
@@ -258,7 +279,7 @@ button:hover {
 }
 
 .verdict-do {
-  background: linear-gradient(135deg, #d9f5e8, #eefaf4);
+  background: linear-gradient(135deg, #d5f3ea, #eefaf6);
 }
 
 .verdict-dont {
@@ -266,7 +287,7 @@ button:hover {
 }
 
 .verdict-only_if {
-  background: linear-gradient(135deg, #e4ecfb, #f3f7fd);
+  background: linear-gradient(135deg, #e4eef5, #f2f7fb);
 }
 
 .error {
@@ -301,7 +322,7 @@ pre.prose {
   white-space: pre-wrap;
   font-family: var(--sans);
   line-height: 1.45;
-  background: rgba(12, 18, 34, 0.04);
+  background: rgba(14, 18, 24, 0.04);
   border-radius: 12px;
   padding: 0.8rem;
   margin: 0;
@@ -342,10 +363,10 @@ figcaption {
 @keyframes pulse-soft {
   0%,
   100% {
-    box-shadow: 0 6px 18px rgba(26, 109, 255, 0.28);
+    box-shadow: 0 8px 22px rgba(15, 157, 138, 0.3);
   }
   50% {
-    box-shadow: 0 8px 26px rgba(26, 109, 255, 0.42);
+    box-shadow: 0 10px 28px rgba(15, 157, 138, 0.48);
   }
 }
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Verdict Loop v2</title>
+  <title>Verdict Loop v3</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -11,21 +11,22 @@
     <header class="hero">
       <div class="brand-row">
         <p class="brand">Verdict Loop</p>
-        <span class="chip">v2 · OpenRouter</span>
+        <span class="chip">v3 · Brief + Memory</span>
       </div>
-      <h1>Stress-test a plan.<br /><em>Then ship creatives.</em></h1>
+      <div class="banner"><strong>New</strong> Brief answers · Compare plans · Follow-up chat</div>
+      <h1>Stress-test a plan.<br /><em>Ask follow-ups.</em></h1>
       <p class="lede">
-        A multi-model red team — research, argue both sides, judge the case,
-        then optionally generate promo copy and images through OpenRouter.
+        Brief by default. Compare two plans. Keep chatting about the verdict —
+        no wall of text unless you pick Detailed.
       </p>
       <div class="steps">
         <div class="step"><strong>1 · Scout</strong>Maps risks &amp; unknowns</div>
         <div class="step"><strong>2 · Debate</strong>Advocate vs Skeptic</div>
         <div class="step"><strong>3 · Judge</strong>Do / don’t / only if</div>
-        <div class="step"><strong>4 · Creative</strong>Copy + image QA loop</div>
+        <div class="step"><strong>4 · Follow-up</strong>Ask about the answer</div>
       </div>
       <div class="models">
-        <p class="models-label">Model roster · OpenRouter edition</p>
+        <p class="models-label">Model roster · OpenRouter</p>
         <div class="model">
           <img src="/static/logos/openai.svg" alt="OpenAI" />
           <span><span class="model-name">OpenAI</span><span class="model-role">Scout + Skeptic · GPT-5 mini</span></span>
@@ -49,15 +50,44 @@
       </div>
     </header>
 
-    <form class="form" method="post" action="/run">
-      <label for="claim">Your plan or claim</label>
-      <textarea id="claim" name="claim" rows="6" placeholder="e.g. Should I launch a weekend newsletter about city walks for local businesses?" required></textarea>
-      <label class="check">
-        <input type="checkbox" name="with_images" value="on" checked />
-        Also run promo + image loop
-      </label>
-      <button type="submit">Run Verdict Loop v2</button>
-      <p class="hint">v2 runs on OpenRouter (GPT-5 mini, Grok, Claude, Gemini, FLUX). First run can take a few minutes.</p>
+    <form class="form" method="post" action="/run" id="run-form">
+      <label>Mode</label>
+      <div class="check" style="gap:1.2rem;margin-bottom:0.85rem;">
+        <label class="check"><input type="radio" name="mode" value="single" checked onchange="toggleMode()" /> Single</label>
+        <label class="check"><input type="radio" name="mode" value="compare" onchange="toggleMode()" /> Compare</label>
+      </div>
+
+      <label>Response length</label>
+      <div class="check" style="gap:1.2rem;margin-bottom:0.85rem;">
+        <label class="check"><input type="radio" name="detail" value="brief" checked /> Brief</label>
+        <label class="check"><input type="radio" name="detail" value="detailed" /> Detailed</label>
+      </div>
+
+      <div id="single-fields">
+        <label for="template">Starter template</label>
+        <select id="template" style="width:100%;margin-bottom:0.85rem;padding:0.6rem;border-radius:12px;border:1px solid var(--line);font:inherit;" onchange="applyTemplate()">
+          {% for t in templates %}
+          <option value="{{ t.claim }}">{{ t.label }}</option>
+          {% endfor %}
+        </select>
+        <label for="claim">Your plan or claim</label>
+        <textarea id="claim" name="claim" rows="5" placeholder="e.g. Should I launch a weekend newsletter about city walks?"></textarea>
+        <label class="check">
+          <input type="checkbox" name="with_images" value="on" />
+          Also generate promo + images
+        </label>
+      </div>
+
+      <div id="compare-fields" style="display:none;">
+        <label for="claim_a">Plan A</label>
+        <textarea id="claim_a" name="claim_a" rows="3" placeholder="First option…"></textarea>
+        <label for="claim_b">Plan B</label>
+        <textarea id="claim_b" name="claim_b" rows="3" placeholder="Second option…"></textarea>
+        <p class="hint">Images stay off in Compare mode.</p>
+      </div>
+
+      <button type="submit">Run Verdict Loop v3</button>
+      <p class="hint">Brief is the default. Follow-ups use session memory after a run.</p>
     </form>
 
     {% if error %}
@@ -67,28 +97,52 @@
     </section>
     {% endif %}
 
-    {% if result %}
+    {% if result and result.mode == 'compare' %}
+    <section class="card">
+      <h2>Compare pick</h2>
+      <p>{{ result.pick }}</p>
+    </section>
+    <div class="debate-grid">
+      {% for side, label in [('result_a', 'Plan A'), ('result_b', 'Plan B')] %}
+      {% set r = result[side] %}
+      {% set v = r.debate.verdict %}
+      {% set rec = (v.recommendation or 'only_if')|lower|replace('-', '')|replace(' ', '') %}
+      {% set vclass = 'verdict-only_if' %}
+      {% if rec in ['do', 'go', 'yes'] %}{% set vclass = 'verdict-do' %}{% endif %}
+      {% if rec in ['dont', "don't", 'no'] %}{% set vclass = 'verdict-dont' %}{% endif %}
+      <section class="card {{ vclass }}">
+        <h2>{{ label }}</h2>
+        <p class="muted">{% if side == 'result_a' %}{{ result.claim_a }}{% else %}{{ result.claim_b }}{% endif %}</p>
+        <p class="badge">{{ v.recommendation }} · score {{ v.score }}</p>
+        <p><strong>{{ v.bottom_line or v.reasoning }}</strong></p>
+        {% if v.conditions %}
+        <ul>{% for c in v.conditions[:3] %}<li>{{ c }}</li>{% endfor %}</ul>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </div>
+    {% elif result %}
     {% set v = result.debate.verdict %}
     {% set rec = (v.recommendation or 'only_if')|lower|replace('-', '')|replace(' ', '') %}
     {% set vclass = 'verdict-only_if' %}
     {% if rec in ['do', 'go', 'yes'] %}{% set vclass = 'verdict-do' %}{% endif %}
     {% if rec in ['dont', "don't", 'no'] %}{% set vclass = 'verdict-dont' %}{% endif %}
     <section class="card {{ vclass }}">
-      <h2>Verdict</h2>
+      <h2>Bottom line</h2>
       <p class="badge">{{ v.recommendation }} · score {{ v.score }}</p>
-      <p>{{ v.reasoning }}</p>
+      <p><strong>{{ v.bottom_line or v.reasoning }}</strong></p>
       {% if v.conditions %}
       <p><strong>Only proceed if</strong></p>
       <ul>
-        {% for c in v.conditions %}
+        {% for c in v.conditions[:3] %}
         <li>{{ c }}</li>
         {% endfor %}
       </ul>
       {% endif %}
     </section>
 
-    <section class="card">
-      <h2>Debate transcript</h2>
+    <details class="card" {% if result.detail == 'detailed' %}open{% endif %}>
+      <summary style="cursor:pointer;font-weight:700;">Full debate</summary>
       {% for rnd in result.debate.rounds %}
       <article class="round">
         <h3>Round {{ rnd.round }}</h3>
@@ -105,7 +159,7 @@
         </div>
       </article>
       {% endfor %}
-    </section>
+    </details>
 
     {% if result.creative %}
     <section class="card">
@@ -119,9 +173,6 @@
           <img src="{{ result._web_base }}/{{ asset.path }}" alt="{{ asset.purpose }}" />
           <figcaption>
             {{ asset.purpose }} · score {{ asset.critique.score }}
-            {% if asset.critique.issues %}
-            <br />{{ asset.critique.issues | join('; ') }}
-            {% endif %}
           </figcaption>
         </figure>
         {% endfor %}
@@ -129,6 +180,33 @@
     </section>
     {% endif %}
     {% endif %}
+
+    {% if result %}
+    <section class="card">
+      <h2>Ask a follow-up</h2>
+      {% for m in messages %}
+      <p><strong>{{ m.role }}:</strong> {{ m.content }}</p>
+      {% endfor %}
+      <form method="post" action="/followup">
+        <label for="question">Question</label>
+        <textarea id="question" name="question" rows="2" placeholder="e.g. What should I check first?" required></textarea>
+        <button type="submit">Ask</button>
+      </form>
+    </section>
+    {% endif %}
   </main>
+  <script>
+    function toggleMode() {
+      const compare = document.querySelector('input[name="mode"][value="compare"]').checked;
+      document.getElementById('single-fields').style.display = compare ? 'none' : 'block';
+      document.getElementById('compare-fields').style.display = compare ? 'block' : 'none';
+      document.getElementById('claim').required = !compare;
+    }
+    function applyTemplate() {
+      const sel = document.getElementById('template');
+      const claim = document.getElementById('claim');
+      if (sel.value) claim.value = sel.value;
+    }
+  </script>
 </body>
 </html>

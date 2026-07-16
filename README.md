@@ -1,8 +1,10 @@
 # Verdict Loop
 
-A multi-model harness: **research → debate → verdict**, then optional **promo copy → image generation → vision QA**.
+A multi-model harness: **research → debate → verdict**, then optional **promo / images**, plus **follow-up chat** with session memory.
 
-Runs on **OpenRouter** — one API key, one balance, access to every major model. Free Groq/Gemini keys act as an automatic fallback if OpenRouter is unreachable or out of credits.
+**v3 defaults:** Brief answers, images off, expandable full debate, compare two plans, starter templates.
+
+Runs on **OpenRouter** — one API key. Free Groq/Gemini keys act as fallback.
 
 ## Roles → models (current lineup)
 

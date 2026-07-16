@@ -42,6 +42,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Print full JSON result to stdout",
     )
     parser.add_argument(
+        "--detailed",
+        action="store_true",
+        help="Full debate transcript mode (default is brief)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Run offline with mock models (no API keys required)",
@@ -76,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
             extra_context=extra,
             config_path=args.config,
             on_progress=on_progress,
+            detail="detailed" if args.detailed else "brief",
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -89,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
         print("=== VERDICT ===")
         print(f"Recommendation: {verdict.get('recommendation')}")
         print(f"Score: {verdict.get('score')}")
+        print(f"Bottom line: {verdict.get('bottom_line') or verdict.get('reasoning')}")
         print(f"Reasoning: {verdict.get('reasoning')}")
         if result.get("creative"):
             promo = result["creative"]["promo"]
