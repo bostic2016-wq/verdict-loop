@@ -17,6 +17,7 @@ from harness.router import ModelRouter
 
 CHAT_SYSTEM = """You are a Verdict Loop chat assistant.
 Be clear and concise unless the user asks for detail.
+Write in plain prose. Do not use markdown italics, bold, headings, or underscore emphasis.
 If RUN CONTEXT is provided, ground answers in it and do not invent facts missing from context.
 If comparing plans A and B in context, say which plan you mean.
 When no run context is attached, answer helpfully as a general planning assistant.
@@ -24,27 +25,38 @@ When no run context is attached, answer helpfully as a general planning assistan
 
 
 def default_chat_catalog(settings: dict[str, Any]) -> list[dict[str, str]]:
-    """Role-backed chat models (label + role id)."""
+    """Chat models: each entry may use explicit `model` and/or a role key."""
     configured = settings.get("chat_models")
+    role_models: dict[str, str] = settings.get("models") or {}
+    out: list[dict[str, str]] = []
+
     if isinstance(configured, list) and configured:
-        out: list[dict[str, str]] = []
         for item in configured:
             if not isinstance(item, dict):
                 continue
-            role = str(item.get("role") or item.get("id") or "").strip()
-            if not role:
+            mid = str(item.get("id") or item.get("role") or "").strip()
+            if not mid:
+                continue
+            role = str(item.get("role") or "").strip()
+            model = str(item.get("model") or "").strip()
+            if not model and role and role in role_models:
+                model = role_models[role]
+            if not model and mid in role_models:
+                model = role_models[mid]
+                role = role or mid
+            if not model:
                 continue
             out.append(
                 {
-                    "id": str(item.get("id") or role),
-                    "label": str(item.get("label") or role),
-                    "role": role,
+                    "id": mid,
+                    "label": str(item.get("label") or mid),
+                    "role": role or mid,
+                    "model": model,
                 }
             )
         if out:
             return out
 
-    models = settings.get("models") or {}
     labels = {
         "judge": "Claude (Judge)",
         "advocate": "Grok (Advocate)",
@@ -52,13 +64,24 @@ def default_chat_catalog(settings: dict[str, Any]) -> list[dict[str, str]]:
         "skeptic": "Gemini (Skeptic)",
         "promoter": "Gemini (Promoter)",
     }
-    catalog: list[dict[str, str]] = []
     for role in ("judge", "advocate", "scout", "skeptic", "promoter"):
-        if role in models:
-            catalog.append(
-                {"id": role, "label": labels.get(role, role.title()), "role": role}
+        if role in role_models:
+            out.append(
+                {
+                    "id": role,
+                    "label": labels.get(role, role.title()),
+                    "role": role,
+                    "model": role_models[role],
+                }
             )
-    return catalog
+    return out
+
+
+def resolve_model_string(entry: dict[str, str], router: ModelRouter) -> str:
+    if entry.get("model"):
+        return entry["model"]
+    role = entry.get("role") or entry.get("id") or ""
+    return router.model_for(role)
 
 
 def _chats_root(settings: dict[str, Any]) -> Path:
@@ -105,9 +128,17 @@ def create_chat(
     catalog = {m["id"]: m for m in default_chat_catalog(settings)}
     selected = [catalog[mid] for mid in model_ids if mid in catalog]
     if not selected:
-        # fall back to first two (or one)
-        defaults = default_chat_catalog(settings)[:2]
-        selected = defaults or [{"id": "judge", "label": "Judge", "role": "judge"}]
+        defaults = default_chat_catalog(settings)
+        selected = defaults or [
+            {
+                "id": "judge",
+                "label": "Judge",
+                "role": "judge",
+                "model": (settings.get("models") or {}).get(
+                    "judge", "openrouter/anthropic/claude-sonnet-5"
+                ),
+            }
+        ]
 
     chat: dict[str, Any] = {
         "id": new_chat_id(),
@@ -144,12 +175,10 @@ def _build_messages(
         if role == "user":
             messages.append({"role": "user", "content": str(msg.get("content") or "")})
         elif role == "assistant":
-            # Prefer the reply for the model we're about to call if present
             content = msg.get("content")
             if content:
                 messages.append({"role": "assistant", "content": str(content)})
             elif isinstance(msg.get("replies"), dict):
-                # Flatten a short synthesis of prior multi-replies
                 parts = []
                 for label, text in msg["replies"].items():
                     parts.append(f"[{label}]: {text}")
@@ -178,6 +207,52 @@ def _history_for_model(
     return history
 
 
+def _call_one(
+    router: ModelRouter,
+    model: dict[str, str],
+    messages: list[dict[str, str]],
+    *,
+    temperature: float,
+) -> str:
+    mid = model["id"]
+    litellm_model = resolve_model_string(model, router)
+    fallback = None
+    role = model.get("role") or ""
+    if role and role in (router.fallbacks or {}):
+        fallback = router.fallbacks[role]
+    return router.complete_model_messages(
+        litellm_model,
+        messages,
+        label=mid,
+        fallback=fallback,
+        temperature=temperature,
+        max_tokens=900,
+    )
+
+
+def _stream_one(
+    router: ModelRouter,
+    model: dict[str, str],
+    messages: list[dict[str, str]],
+    *,
+    temperature: float,
+) -> Iterator[str]:
+    mid = model["id"]
+    litellm_model = resolve_model_string(model, router)
+    fallback = None
+    role = model.get("role") or ""
+    if role and role in (router.fallbacks or {}):
+        fallback = router.fallbacks[role]
+    yield from router.complete_model_messages_stream(
+        litellm_model,
+        messages,
+        label=mid,
+        fallback=fallback,
+        temperature=temperature,
+        max_tokens=900,
+    )
+
+
 def ask_models(
     router: ModelRouter,
     chat: dict[str, Any],
@@ -198,13 +273,10 @@ def ask_models(
 
     def _one(model: dict[str, str]) -> tuple[str, str]:
         mid = model["id"]
-        role = model["role"]
         history = _history_for_model(chat, mid)
         messages = _build_messages(chat, history, question)
         try:
-            text = router.complete_messages(
-                role, messages, temperature=temperature, max_tokens=900
-            )
+            text = _call_one(router, model, messages, temperature=temperature)
         except Exception as exc:
             text = f"Error: {exc}"
         return mid, text
@@ -241,13 +313,10 @@ def ask_models_events(
 
     def _worker(model: dict[str, str]) -> None:
         mid = model["id"]
-        role = model["role"]
         history = _history_for_model(chat, mid)
         messages = _build_messages(chat, history, question)
         try:
-            for chunk in router.complete_messages_stream(
-                role, messages, temperature=temperature, max_tokens=900
-            ):
+            for chunk in _stream_one(router, model, messages, temperature=temperature):
                 q.put(("chunk", mid, chunk))
             q.put(("done", mid, ""))
         except Exception as exc:

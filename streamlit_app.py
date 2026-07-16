@@ -60,8 +60,36 @@ st.markdown(
         --warn: #b42318;
         --line: rgba(14,18,24,0.10);
       }
-      html, body, [class*="css"]  {
-        font-family: "Manrope", sans-serif;
+      html, body, [class*="css"],
+      .stApp, .stMarkdown, .stChatMessage,
+      [data-testid="stMarkdownContainer"],
+      [data-testid="stChatMessage"],
+      [data-testid="stCaptionContainer"],
+      p, li, span, label, textarea, input, button {
+        font-family: "Manrope", sans-serif !important;
+      }
+      .stMarkdown em, .stMarkdown i,
+      .stChatMessage em, .stChatMessage i,
+      [data-testid="stMarkdownContainer"] em,
+      [data-testid="stMarkdownContainer"] i {
+        font-family: "Manrope", sans-serif !important;
+        font-style: italic;
+      }
+      .stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
+      .stMarkdown h4, .stMarkdown h5, .stMarkdown h6,
+      [data-testid="stMarkdownContainer"] h1,
+      [data-testid="stMarkdownContainer"] h2,
+      [data-testid="stMarkdownContainer"] h3 {
+        font-family: "Manrope", sans-serif !important;
+        font-weight: 700;
+      }
+      .vl-reply {
+        font-family: "Manrope", sans-serif !important;
+        font-size: 0.95rem;
+        line-height: 1.55;
+        color: #1e293b;
+        white-space: pre-wrap;
+        word-break: break-word;
       }
       .stApp {
         background:
@@ -133,7 +161,7 @@ st.markdown(
         font-size: 0.72rem;
       }
       .vl-title {
-        font-family: "Instrument Serif", Georgia, serif;
+        font-family: "Instrument Serif", Georgia, serif !important;
         font-size: clamp(2.2rem, 5.2vw, 3.35rem);
         line-height: 1.04;
         color: var(--ink);
@@ -142,6 +170,7 @@ st.markdown(
         letter-spacing: -0.02em;
       }
       .vl-title em {
+        font-family: "Instrument Serif", Georgia, serif !important;
         font-style: italic;
         color: var(--accent-deep);
       }
@@ -319,7 +348,6 @@ def _gate() -> bool:
 
 _LOGO_DIR = Path(__file__).resolve().parent / "web" / "static" / "logos"
 
-# provider logo file, provider name, role caption — mirrors the config.yaml lineup
 _MODEL_STRIP = (
     ("openai", "OpenAI", "Scout · GPT-5 mini"),
     ("xai", "xAI", "Advocate · Grok 4.20"),
@@ -359,17 +387,30 @@ def _verdict_class(rec: str) -> str:
     return "only_if"
 
 
+def _plain_reply(text: str) -> None:
+    """Render model text in Manrope only — no markdown italics/serif bleed."""
+    import html as _html
+
+    safe = _html.escape(text or "").replace("\n", "<br>")
+    st.markdown(f'<div class="vl-reply">{safe}</div>', unsafe_allow_html=True)
+
+
 def _render_verdict_card(result: dict, *, title: str = "Bottom line") -> None:
+    import html as _html
+
     debate = result.get("debate") or {}
     verdict = debate.get("verdict") or {}
     rec = str(verdict.get("recommendation") or "only_if")
-    bottom = verdict.get("bottom_line") or verdict.get("reasoning") or ""
+    bottom = _html.escape(
+        str(verdict.get("bottom_line") or verdict.get("reasoning") or "")
+    )
+    title_safe = _html.escape(title)
     st.markdown(
         f"""
         <div class="vl-verdict {_verdict_class(rec)}">
-          <div class="vl-badge">{rec} · score {verdict.get('score')}</div>
-          <div style="font-family:Instrument Serif,Georgia,serif;font-size:1.4rem;margin-bottom:0.35rem;">{title}</div>
-          <div style="color:#334155;line-height:1.5;font-size:1.05rem;">{bottom}</div>
+          <div class="vl-badge">{_html.escape(rec)} · score {verdict.get('score')}</div>
+          <div style="font-family:Manrope,sans-serif;font-size:1.15rem;font-weight:700;margin-bottom:0.35rem;">{title_safe}</div>
+          <div class="vl-reply">{bottom}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -392,7 +433,7 @@ def _render_debate(result: dict, *, detail: str) -> None:
         notes = debate.get("final_notes") or {}
         if notes.get("summary"):
             st.caption("Research summary")
-            st.write(notes.get("summary"))
+            _plain_reply(str(notes.get("summary")))
         for rnd in rounds:
             st.markdown(
                 f"**Round {rnd['round']}** — judge score {rnd['judgment'].get('score')}"
@@ -400,10 +441,10 @@ def _render_debate(result: dict, *, detail: str) -> None:
             left, right = st.columns(2)
             with left:
                 st.markdown("**Advocate**")
-                st.write(rnd["advocate"])
+                _plain_reply(str(rnd["advocate"] or ""))
             with right:
                 st.markdown("**Skeptic**")
-                st.write(rnd["skeptic"])
+                _plain_reply(str(rnd["skeptic"] or ""))
 
 
 def _render_creative(result: dict) -> None:
@@ -414,7 +455,7 @@ def _render_creative(result: dict) -> None:
     st.markdown("### Promo pack")
     st.markdown(f"#### {promo.get('headline') or 'Promo'}")
     st.caption(promo.get("tagline") or "")
-    st.write(promo.get("promo_blurb") or "")
+    _plain_reply(str(promo.get("promo_blurb") or ""))
     run_dir = Path(result["run_dir"])
     approved = creative.get("approved") or []
     if approved:
@@ -457,8 +498,114 @@ def _render_money_facts(result: dict) -> None:
             st.warning(m)
 
 
+def _model_picker_ui() -> tuple[list[str], dict[str, str]]:
+    """Onset controls: chat models + debate role lineup."""
+    from harness.chat import default_chat_catalog
+    from harness.config import load_settings
+
+    settings = load_settings()
+    catalog = default_chat_catalog(settings)
+    id_to_label = {m["id"]: m["label"] for m in catalog}
+    id_to_model = {m["id"]: m["model"] for m in catalog}
+    all_ids = [m["id"] for m in catalog]
+
+    st.markdown("#### Models")
+    st.caption(
+        "Pick who answers in chat (all selected by default) and who runs each debate role."
+    )
+
+    if "v4_model_multiselect_onset" not in st.session_state:
+        st.session_state["v4_model_multiselect_onset"] = list(all_ids)
+    else:
+        # Drop stale ids if catalog changed
+        st.session_state["v4_model_multiselect_onset"] = [
+            mid
+            for mid in st.session_state["v4_model_multiselect_onset"]
+            if mid in id_to_label
+        ] or list(all_ids)
+
+    c_all, c_none = st.columns(2)
+    with c_all:
+        if st.button("Select all models", use_container_width=True):
+            st.session_state["v4_model_multiselect_onset"] = list(all_ids)
+            st.rerun()
+    with c_none:
+        if st.button("Clear chat models", use_container_width=True):
+            st.session_state["v4_model_multiselect_onset"] = []
+            st.rerun()
+
+    selected = st.multiselect(
+        "Chat models (side-by-side after the verdict)",
+        options=all_ids,
+        format_func=lambda mid: id_to_label.get(mid, mid),
+        key="v4_model_multiselect_onset",
+    )
+    st.session_state["v4_model_ids"] = selected
+
+    role_defaults = {
+        "scout": "gpt-5-mini",
+        "advocate": "grok-4.20",
+        "skeptic": "gemini-2.5-flash",
+        "judge": "claude-sonnet-5",
+    }
+    for role, default_id in list(role_defaults.items()):
+        if default_id not in id_to_model and all_ids:
+            role_defaults[role] = all_ids[0]
+
+    st.caption("Debate lineup")
+    r1, r2 = st.columns(2)
+    with r1:
+        scout_id = st.selectbox(
+            "Scout",
+            all_ids,
+            index=all_ids.index(role_defaults["scout"])
+            if role_defaults["scout"] in all_ids
+            else 0,
+            format_func=lambda mid: id_to_label.get(mid, mid),
+            key="role_scout",
+        )
+        skeptic_id = st.selectbox(
+            "Skeptic",
+            all_ids,
+            index=all_ids.index(role_defaults["skeptic"])
+            if role_defaults["skeptic"] in all_ids
+            else 0,
+            format_func=lambda mid: id_to_label.get(mid, mid),
+            key="role_skeptic",
+        )
+    with r2:
+        advocate_id = st.selectbox(
+            "Advocate",
+            all_ids,
+            index=all_ids.index(role_defaults["advocate"])
+            if role_defaults["advocate"] in all_ids
+            else 0,
+            format_func=lambda mid: id_to_label.get(mid, mid),
+            key="role_advocate",
+        )
+        judge_id = st.selectbox(
+            "Judge",
+            all_ids,
+            index=all_ids.index(role_defaults["judge"])
+            if role_defaults["judge"] in all_ids
+            else 0,
+            format_func=lambda mid: id_to_label.get(mid, mid),
+            key="role_judge",
+        )
+
+    overrides = {
+        "scout": id_to_model[scout_id],
+        "advocate": id_to_model[advocate_id],
+        "skeptic": id_to_model[skeptic_id],
+        "judge": id_to_model[judge_id],
+    }
+    return selected, overrides
+
+
 def _ask_followup(result: dict, detail_used: str) -> None:
-    """v4 multi-model chat grounded in the latest verdict."""
+    """v4 multi-model chat grounded in the latest verdict (models chosen at onset)."""
+    import html as _html
+
     from harness.chat import (
         append_turn,
         ask_models_events,
@@ -473,38 +620,32 @@ def _ask_followup(result: dict, detail_used: str) -> None:
     settings = load_settings()
     catalog = default_chat_catalog(settings)
     id_to_label = {m["id"]: m["label"] for m in catalog}
-    default_ids = [m["id"] for m in catalog[:2]]
+    catalog_by_id = {m["id"]: m for m in catalog}
+    all_ids = [m["id"] for m in catalog]
+    selected = list(st.session_state.get("v4_model_ids") or all_ids)
+    selected = [mid for mid in selected if mid in catalog_by_id]
+    if not selected:
+        selected = all_ids
 
     st.markdown("---")
     st.markdown("### Multi-model chat")
     st.caption(
-        "Ask one or more models side-by-side. Answers stream in parallel and "
+        "Using the models you picked above. Answers stream side-by-side and "
         "stay grounded in this verdict."
     )
+    st.write("**Active:** " + ", ".join(id_to_label.get(m, m) for m in selected))
 
-    # Ensure a chat session exists for this result
     chat_key = "v4_chat"
     chat_id_key = "v4_chat_id"
-    if st.session_state.get("v4_chat_run_dir") != (
-        result.get("run_dir")
-        or (result.get("result_a") or {}).get("run_dir")
-    ):
+    run_dir_now = result.get("run_dir") or (result.get("result_a") or {}).get("run_dir")
+    if st.session_state.get("v4_chat_run_dir") != run_dir_now:
         st.session_state.pop(chat_key, None)
         st.session_state.pop(chat_id_key, None)
-
-    selected = st.multiselect(
-        "Models",
-        options=[m["id"] for m in catalog],
-        default=st.session_state.get("v4_model_ids") or default_ids,
-        format_func=lambda mid: id_to_label.get(mid, mid),
-        key="v4_model_multiselect",
-    )
-    st.session_state["v4_model_ids"] = selected
 
     if not st.session_state.get(chat_key):
         chat = create_chat(
             settings,
-            model_ids=selected or default_ids,
+            model_ids=selected,
             run_result=result,
             detail=detail_used,
         )
@@ -513,28 +654,23 @@ def _ask_followup(result: dict, detail_used: str) -> None:
         st.session_state["v4_chat_run_dir"] = chat.get("run_dir")
     else:
         chat = st.session_state[chat_key]
-        # Keep selected models in sync for the next turn
-        catalog_by_id = {m["id"]: m for m in catalog}
-        chat["models"] = [
-            catalog_by_id[mid] for mid in selected if mid in catalog_by_id
-        ] or chat.get("models") or []
+        chat["models"] = [catalog_by_id[mid] for mid in selected]
 
-    # History
     for msg in chat.get("messages") or []:
         if msg.get("role") == "user":
             with st.chat_message("user"):
-                st.write(msg.get("content") or "")
+                _plain_reply(str(msg.get("content") or ""))
         elif msg.get("role") == "assistant":
             replies = msg.get("replies") or {}
             if not replies and msg.get("content"):
                 with st.chat_message("assistant"):
-                    st.write(msg["content"])
+                    _plain_reply(str(msg["content"]))
             else:
-                cols = st.columns(max(1, len(replies)))
+                cols = st.columns(max(1, min(3, len(replies))))
                 for i, (mid, text) in enumerate(replies.items()):
                     with cols[i % len(cols)]:
                         st.markdown(f"**{label_for(chat, mid)}**")
-                        st.write(text)
+                        _plain_reply(str(text))
 
     suggestions = suggested_followups(result)
     options = ["(type your own below)"] + suggestions
@@ -550,18 +686,16 @@ def _ask_followup(result: dict, detail_used: str) -> None:
         key="followup_text",
     )
 
-    c1, c2, c3 = st.columns([2, 2, 1])
+    c1, c2 = st.columns([2, 2])
     with c1:
         ask = st.button("Ask models", type="primary")
     with c2:
         clear = st.button("Clear chat")
-    with c3:
-        st.write("")
 
     if clear:
         chat = create_chat(
             settings,
-            model_ids=selected or default_ids,
+            model_ids=selected,
             run_result=result,
             detail=detail_used,
         )
@@ -580,23 +714,23 @@ def _ask_followup(result: dict, detail_used: str) -> None:
 
     if ask and question:
         if not selected:
-            st.warning("Pick at least one model.")
+            st.warning("Pick at least one model above.")
             return
-        # Sync models onto chat before asking
-        catalog_by_id = {m["id"]: m for m in catalog}
-        chat["models"] = [catalog_by_id[mid] for mid in selected if mid in catalog_by_id]
+        chat["models"] = [catalog_by_id[mid] for mid in selected]
 
         with st.chat_message("user"):
-            st.write(question)
+            _plain_reply(question)
 
         placeholders: dict[str, Any] = {}
         buffers: dict[str, str] = {mid: "" for mid in selected}
-        cols = st.columns(max(1, len(selected)))
+        cols = st.columns(max(1, min(3, len(selected))))
         for i, mid in enumerate(selected):
-            with cols[i]:
+            with cols[i % len(cols)]:
                 st.markdown(f"**{id_to_label.get(mid, mid)}**")
                 placeholders[mid] = st.empty()
-                placeholders[mid].caption("Thinking…")
+                placeholders[mid].markdown(
+                    '<div class="vl-reply">Thinking…</div>', unsafe_allow_html=True
+                )
 
         try:
             router = ModelRouter(settings)
@@ -605,19 +739,24 @@ def _ask_followup(result: dict, detail_used: str) -> None:
             ):
                 if event == "chunk":
                     buffers[mid] = buffers.get(mid, "") + payload
-                    placeholders[mid].write(buffers[mid])
+                    safe = _html.escape(buffers[mid]).replace("\n", "<br>")
+                    placeholders[mid].markdown(
+                        f'<div class="vl-reply">{safe}</div>', unsafe_allow_html=True
+                    )
                 elif event == "error":
                     buffers[mid] = f"Error: {payload}"
                     placeholders[mid].error(buffers[mid])
                 elif event == "done" and mid in placeholders:
-                    placeholders[mid].write(buffers.get(mid) or "")
+                    safe = _html.escape(buffers.get(mid) or "").replace("\n", "<br>")
+                    placeholders[mid].markdown(
+                        f'<div class="vl-reply">{safe}</div>', unsafe_allow_html=True
+                    )
         except Exception as exc:
             st.error(f"Couldn’t answer: {exc}")
             return
 
         chat = append_turn(settings, chat, question, buffers)
         st.session_state[chat_key] = chat
-        # Also mirror into legacy followups.json for the run
         run_dir = result.get("run_dir") or (
             (result.get("result_a") or {}).get("run_dir")
         )
@@ -626,7 +765,7 @@ def _ask_followup(result: dict, detail_used: str) -> None:
                 from harness.followup import append_followup
 
                 summary = "\n\n".join(
-                    f"**{id_to_label.get(mid, mid)}:** {text}"
+                    f"{id_to_label.get(mid, mid)}: {text}"
                     for mid, text in buffers.items()
                 )
                 append_followup(run_dir, question, summary)
@@ -648,11 +787,11 @@ def main() -> None:
             <p class="vl-brand">Verdict Loop</p>
             <span class="vl-chip">v4 · Multi-model chat</span>
           </div>
-          <div class="vl-banner"><strong>New</strong> Side-by-side streaming chat · Parallel compare · Gemini skeptic</div>
+          <div class="vl-banner"><strong>New</strong> Pick every model up front · Side-by-side chat · Parallel compare</div>
           <h1 class="vl-title">Stress-test a plan.<br/><em>Chat with the models.</em></h1>
           <p class="vl-lede">
-            Brief by default. Compare two plans in parallel. Then ask Claude, Grok,
-            GPT, and Gemini side-by-side — grounded in the verdict.
+            Choose your lineup first. Compare two plans in parallel. Then ask every
+            selected model side-by-side — grounded in the verdict.
           </p>
         </div>
         <div class="vl-steps">
@@ -667,6 +806,8 @@ def main() -> None:
     )
 
     st.markdown('<div class="vl-panel">', unsafe_allow_html=True)
+
+    chat_model_ids, model_overrides = _model_picker_ui()
 
     mode = st.radio(
         "Mode",
@@ -721,12 +862,15 @@ def main() -> None:
             "Add **OPENROUTER_API_KEY** in Streamlit Cloud → Settings → Secrets."
         )
     else:
-        st.caption("OpenRouter ready · v4 multi-model chat · Parallel compare")
+        st.caption("OpenRouter ready · pick models above · Parallel compare")
+
+    if not chat_model_ids:
+        st.warning("Select at least one chat model above.")
 
     run = st.button(
         "Run Verdict Loop v4",
         type="primary",
-        disabled=not can_run or not has_keys,
+        disabled=not can_run or not has_keys or not chat_model_ids,
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -767,6 +911,7 @@ def main() -> None:
                         claim_b.strip(),
                         detail=detail,
                         on_progress=on_progress,
+                        model_overrides=model_overrides,
                     )
                 else:
                     result = run_pipeline(
@@ -774,6 +919,7 @@ def main() -> None:
                         with_images=with_images,
                         detail=detail,
                         on_progress=on_progress,
+                        model_overrides=model_overrides,
                     )
             except Exception as exc:
                 progress.empty()
@@ -783,7 +929,6 @@ def main() -> None:
         st.session_state["last_result"] = result
         st.session_state["followup_messages"] = []
         st.session_state["detail_used"] = detail
-        # Reset chat for new run
         st.session_state.pop("v4_chat", None)
         st.session_state.pop("v4_chat_id", None)
         st.session_state.pop("v4_chat_run_dir", None)

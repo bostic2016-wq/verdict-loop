@@ -36,8 +36,13 @@ def run_pipeline(
     config_path: Path | None = None,
     on_progress: ProgressCb | None = None,
     detail: str = "brief",
+    model_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     settings = load_settings(config_path)
+    if model_overrides:
+        merged = dict(settings.get("models") or {})
+        merged.update({k: v for k, v in model_overrides.items() if v})
+        settings = {**settings, "models": merged}
     if not dry_run:
         require_text_keys(settings)
     root: Path = settings["_root"]
@@ -129,11 +134,16 @@ def run_compare(
     config_path: Path | None = None,
     on_progress: ProgressCb | None = None,
     detail: str = "brief",
+    model_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run two plans in parallel (images off) and pick a winner line."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     settings = load_settings(config_path)
+    if model_overrides:
+        merged = dict(settings.get("models") or {})
+        merged.update({k: v for k, v in model_overrides.items() if v})
+        settings = {**settings, "models": merged}
     if not dry_run:
         require_text_keys(settings)
 
@@ -156,6 +166,7 @@ def run_compare(
             config_path=config_path,
             on_progress=tag("a"),
             detail=detail,
+            model_overrides=model_overrides,
         )
         fut_b = pool.submit(
             run_pipeline,
@@ -165,6 +176,7 @@ def run_compare(
             config_path=config_path,
             on_progress=tag("b"),
             detail=detail,
+            model_overrides=model_overrides,
         )
         for fut in as_completed([fut_a, fut_b]):
             if fut is fut_a:

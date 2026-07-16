@@ -250,6 +250,28 @@ class ModelRouter:
             max_tokens=max_tokens or 1024,
         )
 
+    def complete_model_messages(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        label: str | None = None,
+        fallback: str | None = None,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ) -> str:
+        models_to_try = [model]
+        if fallback and fallback not in models_to_try:
+            models_to_try.append(fallback)
+        return self._try_models(
+            models_to_try,
+            role=label or model,
+            messages=messages,
+            json_mode=False,
+            temperature=temperature,
+            max_tokens=max_tokens or 1024,
+        )
+
     def complete_stream(
         self,
         role: str,
@@ -282,6 +304,27 @@ class ModelRouter:
         yield from self._try_models_stream(
             self._models_for_role(role),
             role=role,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens or 1024,
+        )
+
+    def complete_model_messages_stream(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        *,
+        label: str | None = None,
+        fallback: str | None = None,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+    ) -> Iterator[str]:
+        models_to_try = [model]
+        if fallback and fallback not in models_to_try:
+            models_to_try.append(fallback)
+        yield from self._try_models_stream(
+            models_to_try,
+            role=label or model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens or 1024,

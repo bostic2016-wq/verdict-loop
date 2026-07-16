@@ -26,20 +26,48 @@ models:
   image_critic: openrouter/google/gemini-2.5-flash
   image_model: black-forest-labs/flux.2-pro
 
-# v4 multi-model chat roster (role → models map above)
+# Full chat + debate picker roster (OpenRouter litellm ids)
 chat_models:
-  - id: judge
+  - id: claude-sonnet-5
     label: Claude Sonnet 5
+    model: openrouter/anthropic/claude-sonnet-5
     role: judge
-  - id: advocate
+  - id: claude-opus-4
+    label: Claude Opus 4
+    model: openrouter/anthropic/claude-opus-4
+  - id: grok-4.20
     label: Grok 4.20
+    model: openrouter/x-ai/grok-4.20
     role: advocate
-  - id: scout
+  - id: gpt-5-mini
     label: GPT-5 mini
+    model: openrouter/openai/gpt-5-mini
     role: scout
-  - id: skeptic
+  - id: gpt-4o
+    label: GPT-4o
+    model: openrouter/openai/gpt-4o
+  - id: o3-mini
+    label: o3-mini
+    model: openrouter/openai/o3-mini
+  - id: gemini-2.5-flash
     label: Gemini 2.5 Flash
+    model: openrouter/google/gemini-2.5-flash
     role: skeptic
+  - id: gemini-2.5-pro
+    label: Gemini 2.5 Pro
+    model: openrouter/google/gemini-2.5-pro
+  - id: llama-3.3-70b
+    label: Llama 3.3 70B
+    model: openrouter/meta-llama/llama-3.3-70b-instruct
+  - id: deepseek-r1
+    label: DeepSeek R1
+    model: openrouter/deepseek/deepseek-r1
+  - id: mistral-large
+    label: Mistral Large
+    model: openrouter/mistralai/mistral-large
+  - id: qwen3-235b
+    label: Qwen3 235B
+    model: openrouter/qwen/qwen3-235b-a22b
 
 fallback_models:
   # Free-tier safety net if OpenRouter is unreachable or out of credits
