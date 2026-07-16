@@ -57,17 +57,19 @@ st.markdown(
         --line: rgba(16,20,28,0.10);
         --soft: #f3f5f7;
       }
-      html, body, .stApp, [class*="css"],
-      .stMarkdown, .stChatMessage, .stCaption,
+      /* Font only — never touch letter-spacing/shadow of Streamlit internals */
+      html, body, .stApp,
+      .stMarkdown, .stChatMessage,
       [data-testid="stMarkdownContainer"],
       [data-testid="stChatMessage"],
       [data-testid="stCaptionContainer"],
       [data-testid="stWidgetLabel"],
-      p, li, span, label, textarea, input, button, h1, h2, h3, h4, h5, h6 {
-        font-family: "Manrope", sans-serif !important;
-        letter-spacing: 0 !important;
-        text-shadow: none !important;
-        filter: none !important;
+      [data-testid="stExpander"] summary,
+      p, li, label, textarea, input, button, h1, h2, h3, h4, h5, h6 {
+        font-family: "Manrope", sans-serif;
+      }
+      [data-testid="stExpander"] summary {
+        letter-spacing: normal;
       }
       .stApp {
         background: var(--soft);
@@ -142,6 +144,27 @@ st.markdown(
       .vl-meta {
         font-size: 0.78rem; color: var(--muted); margin: 0.35rem 0 0;
       }
+      .vl-section-title {
+        font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em;
+        text-transform: uppercase; color: var(--muted); margin: 0 0 0.5rem;
+      }
+      .vl-money {
+        background: #e8f7f2; border: 1px solid rgba(12,143,124,0.28);
+        border-radius: 14px; padding: 0.95rem 1.05rem; margin: 0.75rem 0 1rem;
+      }
+      .vl-money .vl-section-title { color: var(--accent-deep); }
+      .vl-warn {
+        background: #fdf3e7; border: 1px solid rgba(180,83,9,0.28);
+        border-radius: 10px; padding: 0.55rem 0.75rem; margin: 0.5rem 0 0;
+        font-size: 0.88rem; color: #92400e; line-height: 1.5;
+      }
+      .vl-qa {
+        display: inline-block; font-size: 0.7rem; font-weight: 800;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        padding: 0.22rem 0.55rem; border-radius: 999px; margin-top: 0.5rem;
+      }
+      .vl-qa.pass { background: #e8f7f2; color: var(--accent-deep); border: 1px solid rgba(12,143,124,0.35); }
+      .vl-qa.revise { background: #fdf3e7; color: #92400e; border: 1px solid rgba(180,83,9,0.35); }
       .vl-steps {
         display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem;
         margin: 1rem 0 0.25rem;
@@ -158,8 +181,6 @@ st.markdown(
         border: 0 !important; border-radius: 12px !important; font-weight: 700 !important;
       }
       textarea, [data-baseweb="select"] { border-radius: 10px !important; }
-      /* Kill Streamlit markdown italics looking like a second font */
-      em, i, strong, b { font-family: inherit !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -205,6 +226,24 @@ def _plain(text: str) -> None:
     st.markdown(f'<div class="vl-reply">{safe}</div>', unsafe_allow_html=True)
 
 
+def _qa_badge(verdict: str | None, notes: str | None) -> None:
+    import html as _html
+
+    v = (verdict or "").strip().upper()
+    if v not in {"PASS", "REVISE"}:
+        return
+    label = "QA passed" if v == "PASS" else "QA revised"
+    cls = "pass" if v == "PASS" else "revise"
+    st.markdown(
+        f'<span class="vl-qa {cls}">{label}</span>', unsafe_allow_html=True
+    )
+    note = (notes or "").strip()
+    if note and note.lower() not in {"none", "issues: none"}:
+        st.markdown(
+            f'<p class="vl-meta">{_html.escape(note)}</p>', unsafe_allow_html=True
+        )
+
+
 def _render_verdict_card(result: dict, *, title: str = "Bottom line") -> None:
     import html as _html
 
@@ -212,21 +251,29 @@ def _render_verdict_card(result: dict, *, title: str = "Bottom line") -> None:
     verdict = debate.get("verdict") or {}
     rec = str(verdict.get("recommendation") or "only_if")
     bottom = _html.escape(str(verdict.get("bottom_line") or verdict.get("reasoning") or ""))
+    conditions = verdict.get("conditions") or []
+    cond_html = ""
+    if conditions:
+        items = "".join(
+            f'<div class="vl-reply">•&nbsp; {_html.escape(str(c))}</div>'
+            for c in conditions[:3]
+        )
+        cond_html = (
+            '<div style="margin-top:0.75rem;">'
+            '<p class="vl-section-title">Only proceed if</p>'
+            f"{items}</div>"
+        )
     st.markdown(
         f"""
         <div class="vl-verdict {_verdict_class(rec)}">
           <div class="vl-badge">{_html.escape(rec)} · score {verdict.get('score')}</div>
           <div style="font-weight:700;font-size:1.05rem;margin-bottom:0.35rem;">{_html.escape(title)}</div>
           <div class="vl-reply">{bottom}</div>
+          {cond_html}
         </div>
         """,
         unsafe_allow_html=True,
     )
-    conditions = verdict.get("conditions") or []
-    if conditions:
-        st.markdown("**Only proceed if**")
-        for c in conditions[:3]:
-            st.write(f"• {c}")
 
 
 def _render_debate(result: dict, *, detail: str) -> None:
@@ -237,16 +284,23 @@ def _render_debate(result: dict, *, detail: str) -> None:
     with st.expander("Full debate", expanded=(detail == "detailed")):
         notes = debate.get("final_notes") or {}
         if notes.get("summary"):
-            st.caption("Research summary")
+            st.markdown(
+                '<p class="vl-section-title">Research summary</p>',
+                unsafe_allow_html=True,
+            )
             _plain(str(notes.get("summary")))
         for rnd in rounds:
-            st.write(f"Round {rnd['round']} — judge score {rnd['judgment'].get('score')}")
+            st.markdown(
+                f'<p class="vl-section-title" style="margin-top:0.75rem;">'
+                f"Round {rnd['round']} · judge score {rnd['judgment'].get('score')}</p>",
+                unsafe_allow_html=True,
+            )
             left, right = st.columns(2)
             with left:
-                st.write("Advocate")
+                st.markdown('<p class="vl-section-title">Advocate</p>', unsafe_allow_html=True)
                 _plain(str(rnd.get("advocate") or ""))
             with right:
-                st.write("Skeptic")
+                st.markdown('<p class="vl-section-title">Skeptic</p>', unsafe_allow_html=True)
                 _plain(str(rnd.get("skeptic") or ""))
 
 
@@ -277,21 +331,32 @@ def _keys_ok() -> bool:
 
 
 def _render_money_facts(result: dict) -> None:
+    import html as _html
+
     money = result.get("money_facts") or {}
     if not money.get("has_money_signal"):
         return
-    with st.expander("Verified money math", expanded=True):
-        if money.get("gross") is not None:
-            st.write(f"Gross used: ${money['gross']:,.0f}/yr")
-        if money.get("net") is not None and money.get("tax_rate") is not None:
-            st.write(
-                f"After-tax: ${money['net']:,.0f}/yr "
-                f"at {money['tax_rate'] * 100:g}% effective tax"
-            )
-        for c in money.get("calculations") or []:
-            st.write(f"• {c}")
-        for m in money.get("missing") or []:
-            st.warning(m)
+    lines: list[str] = []
+    if money.get("gross") is not None:
+        lines.append(f"Gross used: ${money['gross']:,.0f}/yr")
+    if money.get("net") is not None and money.get("tax_rate") is not None:
+        lines.append(
+            f"After-tax: ${money['net']:,.0f}/yr "
+            f"at {money['tax_rate'] * 100:g}% effective tax"
+        )
+    lines.extend(str(c) for c in money.get("calculations") or [])
+    body = "".join(
+        f'<div class="vl-reply">•&nbsp; {_html.escape(line)}</div>' for line in lines
+    )
+    warns = "".join(
+        f'<div class="vl-warn">{_html.escape(str(m))}</div>'
+        for m in money.get("missing") or []
+    )
+    st.markdown(
+        f'<div class="vl-money"><p class="vl-section-title">Verified money math</p>'
+        f"{body}{warns}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _model_picker_ui() -> tuple[list[str], dict[str, str]]:
@@ -428,8 +493,7 @@ def _ask_followup(result: dict, detail_used: str) -> None:
         elif msg.get("role") == "assistant":
             with st.chat_message("assistant"):
                 _plain(str(msg.get("content") or ""))
-                if msg.get("qa_notes") and str(msg.get("qa_notes")).lower() not in {"none", "issues: none"}:
-                    st.caption(f"QA · {msg.get('qa_notes')}")
+                _qa_badge(msg.get("qa_verdict"), msg.get("qa_notes"))
                 nq = msg.get("next_question")
                 if nq:
                     st.markdown(
@@ -488,8 +552,7 @@ def _ask_followup(result: dict, detail_used: str) -> None:
             return
         status.empty()
         _plain(out["consensus"])
-        if out.get("qa_notes") and str(out["qa_notes"]).lower() not in {"none", "issues: none"}:
-            st.caption(f"QA · {out['qa_notes']} ({out.get('qa_verdict')})")
+        _qa_badge(out.get("qa_verdict"), out.get("qa_notes"))
         nq = out.get("next_question") or ""
         if nq:
             st.markdown(
@@ -510,6 +573,7 @@ def _ask_followup(result: dict, detail_used: str) -> None:
         consensus=out.get("consensus"),
         next_question=out.get("next_question"),
         qa_notes=out.get("qa_notes"),
+        qa_verdict=out.get("qa_verdict"),
     )
     st.session_state[chat_key] = chat
     if run_dir_now:

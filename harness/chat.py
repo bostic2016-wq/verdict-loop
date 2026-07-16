@@ -161,6 +161,11 @@ def create_chat(
             (run_result.get("result_a") or {}).get("run_dir")
         )
         chat["run_context"] = build_run_context(run_result, detail=detail)
+        money = run_result.get("money_facts") or (
+            (run_result.get("result_a") or {}).get("money_facts")
+        )
+        if money:
+            chat["money_facts"] = money
     save_chat(settings, chat)
     return chat
 
@@ -354,6 +359,7 @@ def append_turn(
     consensus: str | None = None,
     next_question: str | None = None,
     qa_notes: str | None = None,
+    qa_verdict: str | None = None,
 ) -> dict[str, Any]:
     chat.setdefault("messages", []).append(
         {"role": "user", "content": question, "ts": datetime.now(timezone.utc).isoformat()}
@@ -368,6 +374,8 @@ def append_turn(
         assistant["next_question"] = next_question
     if qa_notes:
         assistant["qa_notes"] = qa_notes
+    if qa_verdict:
+        assistant["qa_verdict"] = qa_verdict
     chat["messages"].append(assistant)
     if next_question:
         chat["pending_question"] = next_question
@@ -393,18 +401,21 @@ Rules:
 """
 
 QA_SYSTEM = """You are Verdict Loop's fact-check auditor (QA).
-You receive RUN CONTEXT, the USER QUESTION, and a DRAFT consensus answer.
+You receive RUN CONTEXT, the USER QUESTION, a DRAFT consensus answer, and possibly
+DETERMINISTIC CHECK FAILURES from a calculator that has already verified the math.
 Your job: catch invented facts, wrong money math, and claims not supported by context.
 
-Return plain text in this exact shape:
-VERDICT: PASS or REVISE
-ISSUES: (one short line, or "none")
-ANSWER: (the final answer the user should see — if PASS, copy/tighten the draft; if REVISE, rewrite it correctly using only RUN CONTEXT)
+Respond with ONLY a JSON object, no code fences, in this exact shape:
+{"verdict": "PASS" or "REVISE", "issues": ["short issue", ...] or [], "answer": "final answer text"}
 
 Rules:
-- If VERIFIED MONEY MATH is present, numbers in ANSWER must match it exactly.
-- If something is unknown, say what is missing instead of guessing.
-- Plain prose only. No markdown.
+- If DETERMINISTIC CHECK FAILURES are listed, verdict MUST be REVISE and the answer
+  must be rewritten so every figure matches the VERIFIED MONEY MATH in context.
+- If VERIFIED MONEY MATH is present, numbers in the answer must match it exactly.
+- If a claim is not supported by RUN CONTEXT and is not common knowledge, flag it.
+- If something is unknown, the answer should say what is missing instead of guessing.
+- The answer must be plain prose. No markdown, no headings, no bullet symbols.
+- When unsure, prefer REVISE over PASS.
 """
 
 NEXT_Q_SYSTEM = """You ask the user ONE clarifying follow-up question.
@@ -491,7 +502,18 @@ def ask_consensus(
             f"Could not build consensus: {exc}",
         )
 
-    # 3) QA audit (different model family)
+    # 3) Deterministic money gate on the draft
+    from harness.money import check_draft_numbers
+
+    money_facts = chat.get("money_facts")
+    gate_issues = check_draft_numbers(draft, money_facts)
+
+    # 4) QA audit (different model family), structured JSON output
+    gate_block = ""
+    if gate_issues:
+        gate_block = "\n\nDETERMINISTIC CHECK FAILURES:\n" + "\n".join(
+            f"- {i}" for i in gate_issues
+        )
     qa_messages = [
         {"role": "system", "content": QA_SYSTEM},
         {
@@ -500,6 +522,7 @@ def ask_consensus(
                 f"RUN CONTEXT:\n{ctx}\n\n"
                 f"USER QUESTION:\n{question}\n\n"
                 f"DRAFT:\n{draft}"
+                f"{gate_block}"
             ),
         },
     ]
@@ -517,8 +540,21 @@ def ask_consensus(
         )
         qa_verdict, qa_notes, consensus = _parse_qa_block(qa_raw, draft)
     except Exception as exc:
-        qa_notes = f"QA skipped: {exc}"
+        qa_notes = f"QA audit unavailable ({exc})"
         consensus = draft
+        if gate_issues:
+            qa_verdict = "REVISE"
+
+    # 5) Re-run the gate on whatever answer survived QA; fail closed.
+    final_gate = check_draft_numbers(consensus, money_facts)
+    if final_gate:
+        qa_verdict = "REVISE"
+        gate_note = "; ".join(final_gate)
+        qa_notes = gate_note if qa_notes in ("none", "") else f"{qa_notes}; {gate_note}"
+    elif gate_issues and qa_verdict == "PASS":
+        # QA fixed the numbers but forgot to flag it — keep the audit trail honest.
+        qa_verdict = "REVISE"
+        qa_notes = "; ".join(gate_issues)
 
     # 4) Next question for the user
     next_q = ""
@@ -556,16 +592,37 @@ def ask_consensus(
 
 
 def _parse_qa_block(qa_raw: str, draft: str) -> tuple[str, str, str]:
-    """Parse VERDICT / ISSUES / ANSWER from QA model output."""
-    verdict = "PASS"
+    """Parse the QA model's JSON audit. Falls back to legacy VERDICT/ISSUES/ANSWER
+    lines, and fails closed (REVISE) when the output is unparseable."""
+    text = qa_raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    start, end = text.find("{"), text.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(text[start : end + 1])
+        except (json.JSONDecodeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            verdict = "REVISE" if str(data.get("verdict", "")).strip().upper() != "PASS" else "PASS"
+            raw_issues = data.get("issues") or []
+            if isinstance(raw_issues, str):
+                raw_issues = [raw_issues] if raw_issues.strip() else []
+            issues = "; ".join(str(i) for i in raw_issues if str(i).strip()) or "none"
+            answer = str(data.get("answer") or "").strip()
+            return verdict, issues, answer or draft
+
+    # Legacy plain-text shape
+    verdict = ""
     issues = "none"
-    answer = draft
+    answer = ""
     for line in qa_raw.splitlines():
         stripped = line.strip()
         upper = stripped.upper()
         if upper.startswith("VERDICT:"):
-            if "REVISE" in upper:
-                verdict = "REVISE"
+            verdict = "REVISE" if "REVISE" in upper else "PASS"
         elif upper.startswith("ISSUES:"):
             issues = stripped.split(":", 1)[-1].strip() or "none"
     for marker in ("ANSWER:", "Answer:", "answer:"):
@@ -573,4 +630,7 @@ def _parse_qa_block(qa_raw: str, draft: str) -> tuple[str, str, str]:
         if idx >= 0:
             answer = qa_raw[idx + len(marker) :].strip()
             break
+    if not verdict:
+        # Could not understand the audit at all — fail closed on the draft.
+        return "REVISE", "QA output was unparseable; showing unaudited draft.", draft
     return verdict, issues, answer or draft
