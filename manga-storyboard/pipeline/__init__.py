@@ -1,0 +1,1 @@
+"""Manga storyboard pipeline package."""

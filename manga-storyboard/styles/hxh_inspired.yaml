@@ -1,0 +1,29 @@
+id: hxh_inspired
+name: HxH-inspired
+description: >
+  Adventure shonen aesthetic — cleaner proportions, softer screentone feel,
+  expressive character acting, nen-aura language for power moments.
+  Inspired by classic adventure manga pacing (not a copy of any specific series).
+
+positive_tags: >
+  masterpiece, best quality, amazing quality, manga panel, adventure shonen manga,
+  clean ink lines, soft screentones, expressive character acting,
+  clear silhouettes, readable poses, warm adventure atmosphere,
+  cel shaded, detailed backgrounds, youthful proportions, dynamic but clear composition
+
+negative_tags: >
+  photorealistic, photograph, 3d render, soft blur, watercolor,
+  speech bubble, text, watermark, signature, logo, ui, border, frame,
+  deformed hands, extra limbs, fused fingers, lowres, blurry, worst quality,
+  hyper-violent gore, excessive dutch angle, muddy shadows, western comic
+
+settings:
+  guidance_scale: 6.0
+  num_inference_steps: 28
+  style_strength: 0.8
+
+framing_hints:
+  - clear establishing shots before intimate moments
+  - character acting over pure spectacle
+  - reaction panels after reveals
+  - softer contrast for quiet dialogue; harder ink for nen/power beats

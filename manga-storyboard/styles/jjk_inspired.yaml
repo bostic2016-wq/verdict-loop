@@ -1,0 +1,29 @@
+id: jjk_inspired
+name: JJK-inspired
+description: >
+  Modern battle-shonen aesthetic — sharp ink, high-contrast shadows,
+  dynamic camera tilt, dense action framing. Inspired by contemporary
+  shonen battle manga line language (not a copy of any specific series).
+
+positive_tags: >
+  masterpiece, best quality, amazing quality, manga panel, shonen battle manga,
+  sharp black ink lines, high contrast shadows, dynamic composition,
+  dramatic camera angle, intense atmosphere, cel shaded, screentones,
+  bold linework, action manga style, detailed eyes, expressive faces
+
+negative_tags: >
+  photorealistic, photograph, 3d render, soft blur, watercolor, pastel,
+  speech bubble, text, watermark, signature, logo, ui, border, frame,
+  deformed hands, extra limbs, fused fingers, lowres, blurry, worst quality,
+  western comic, disney, chibi, cute pastel anime
+
+settings:
+  guidance_scale: 6.5
+  num_inference_steps: 28
+  style_strength: 0.85
+
+framing_hints:
+  - dutch angles for tension
+  - extreme close-ups on eyes and hands for emotion
+  - wide establishing shots with strong negative space
+  - speed lines sparingly for impact moments

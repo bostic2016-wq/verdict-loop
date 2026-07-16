@@ -1,0 +1,34 @@
+models:
+  director: openrouter/anthropic/claude-sonnet-4
+  vision_critic: openrouter/anthropic/claude-sonnet-4
+  # Image backend: mock | fal_illustrious | openrouter_gpt_image
+  # Start on mock so the UI works without FAL_KEY; switch when ready.
+  image_backend: mock
+  image_model: fal-ai/flux/dev
+
+fallback_models:
+  director: openrouter/google/gemini-2.5-flash
+  vision_critic: openrouter/google/gemini-2.5-flash
+
+vision_qa:
+  enabled: true
+  pass_score: 0.7
+  max_retries: 2
+
+sequence_qa:
+  enabled: true
+  pass_score: 0.7
+
+pilot:
+  panel_count: 5
+  batch_size: 5
+
+paths:
+  library_dir: library
+  outputs_dir: outputs/runs
+  styles_dir: styles
+
+defaults:
+  aesthetic: jjk_inspired
+  image_width: 768
+  image_height: 1024
