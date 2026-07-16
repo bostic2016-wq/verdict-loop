@@ -2,7 +2,6 @@ models:
   director: openrouter/anthropic/claude-sonnet-4
   vision_critic: openrouter/google/gemini-2.5-flash
   # openrouter = FLUX via OpenRouter (uses OPENROUTER_API_KEY)
-  # auto | mock | fal_illustrious | pollinations | openrouter_gpt_image
   image_backend: openrouter
   image_model: black-forest-labs/flux.2-pro
 
@@ -13,14 +12,20 @@ fallback_models:
   director: openrouter/google/gemini-2.5-flash
   vision_critic: openrouter/google/gemini-2.5-flash
 
+# Local prompt compiler is faster + better at forcing full cast into the prompt
+prompt_compile:
+  use_llm: false
+
 vision_qa:
   enabled: true
-  pass_score: 0.65
-  max_retries: 2
+  pass_score: 0.60
+  max_retries: 1   # was 2 — each retry = another FLUX + vision call
 
+# Sequence review was the main "next 5" slowdown (extra vision + optional full regenerations)
 sequence_qa:
-  enabled: true
+  enabled: false
   pass_score: 0.65
+  regen_on_fail: false
 
 pilot:
   panel_count: 5

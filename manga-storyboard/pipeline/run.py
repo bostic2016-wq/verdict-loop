@@ -58,7 +58,8 @@ def generate_batch(
 
     seq_cfg = settings.get("sequence_qa") or {}
     sequence: dict[str, Any] = {"sequence_pass": True, "panels_to_regen": [], "notes": ""}
-    if seq_cfg.get("enabled", True) and results:
+    # Sequence critique is optional; auto-regen is OFF by default (major slowdown on "next 5")
+    if seq_cfg.get("enabled", False) and results:
         paths = [Path(r["path"]) for r in results]
         sequence = critique_sequence(
             router,
@@ -69,31 +70,31 @@ def generate_batch(
         )
         emit("sequence_done", {"sequence": sequence})
 
-        # Regen flagged panels once
-        for idx in sequence.get("panels_to_regen") or []:
-            try:
-                i = int(idx) - 1
-            except (TypeError, ValueError):
-                continue
-            if i < 0 or i >= len(results):
-                continue
-            panel = panels[i]
-            emit("panel_regen_sequence", {"index": panel.get("index")})
-            out = run_dir / "panels" / f"panel_{panel['index']:03d}.png"
-            prior = ""
-            if i > 0:
-                prev = panels[i - 1]
-                prior = f"{prev.get('shot_type')}: {prev.get('action')}"
-            record = generate_with_qa(
-                router,
-                settings,
-                bible,
-                panel,
-                out,
-                generate_fn=generate_panel_image,
-                prior_notes=prior,
-            )
-            results[i] = {**panel, **record}
+        if seq_cfg.get("regen_on_fail", False):
+            for idx in sequence.get("panels_to_regen") or []:
+                try:
+                    i = int(idx) - 1
+                except (TypeError, ValueError):
+                    continue
+                if i < 0 or i >= len(results):
+                    continue
+                panel = panels[i]
+                emit("panel_regen_sequence", {"index": panel.get("index")})
+                out = run_dir / "panels" / f"panel_{panel['index']:03d}.png"
+                prior = ""
+                if i > 0:
+                    prev = panels[i - 1]
+                    prior = f"{prev.get('shot_type')}: {prev.get('action')}"
+                record = generate_with_qa(
+                    router,
+                    settings,
+                    bible,
+                    panel,
+                    out,
+                    generate_fn=generate_panel_image,
+                    prior_notes=prior,
+                )
+                results[i] = {**panel, **record}
 
     payload = {"panels": results, "sequence": sequence}
     save_json(run_dir / f"batch_{start_index:03d}.json", payload)

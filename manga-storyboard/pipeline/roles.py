@@ -92,6 +92,12 @@ Transcript excerpt (focus region):
 Generate panels starting at index {start_index}, count={count}.
 For a pilot, cover the first story beats only.
 
+CRITICAL CAST RULES:
+- "characters" must list EVERY named person who appears or speaks in that panel.
+- If two or more characters interact, ALL of them go in "characters" (never drop someone).
+- Close-ups may still include a second character partially in frame if the beat needs them.
+- Prefer group shots (medium/wide) when 2+ characters share a beat — don't hide cast off-panel.
+
 Return JSON:
 {{
   "panels": [
@@ -100,13 +106,13 @@ Return JSON:
       "index": 1,
       "page": 1,
       "shot_type": "wide|medium|close|extreme_close|ots|low|high|dutch",
-      "subject": "who/what is in frame",
+      "subject": "who/what is in frame — name every character",
       "action": "one verb beat",
       "emotion": "reader feeling in 1 second",
       "dialogue": "caption text or empty",
       "setting": "place/time/weather",
       "continuity": "what inherits from previous panel",
-      "characters": ["Name"],
+      "characters": ["Name1", "Name2"],
       "notes": "optional staging note"
     }}
   ]
@@ -114,15 +120,18 @@ Return JSON:
 """
 
 GRAMMAR_FIX_SYSTEM = """You fix manga panel plans that fail editorial grammar.
-Return STRICT JSON with a corrected panels array only."""
+Return STRICT JSON with a corrected panels array only.
+Preserve full character casts — never remove a character from a panel's characters list."""
 
 PROMPT_SYSTEM = """You compile a single manga panel image prompt from a creative bible + panel brief.
 Return STRICT JSON: {{"prompt": "...", "negative_prompt": "..."}}
-No speech bubbles, no watermarks, no text in the image. Manga line art style matching the aesthetic preset tags."""
+No speech bubbles, no watermarks, no text in the image. Manga line art style matching the aesthetic preset tags.
+ALWAYS state the exact number of characters and name each one with visual traits. Missing cast = failed prompt."""
 
 VISION_SYSTEM = """You are a ruthless manga storyboard editor doing vision QA.
 Judge ONE panel image against its brief and creative bible.
-Return STRICT JSON only."""
+Return STRICT JSON only.
+Missing required characters is a HARD FAIL."""
 
 VISION_USER = """Creative bible (excerpt):
 {bible_excerpt}
@@ -130,14 +139,18 @@ VISION_USER = """Creative bible (excerpt):
 Panel brief:
 {panel}
 
+Required characters for this panel (ALL must be visible):
+{required_cast}
+
 Prior panel notes (continuity):
 {prior}
 
-Score dimensions 0–1: narrative_match, composition, style_fit, technical_clean, continuity, clean_frame.
-Hard-fail if narrative_match < 0.4 or clean_frame < 0.4.
+Score dimensions 0–1: narrative_match, composition, style_fit, technical_clean, continuity, clean_frame, character_presence.
+character_presence = fraction of required cast clearly visible (1.0 only if ALL required characters appear).
+Hard-fail if narrative_match < 0.4 OR clean_frame < 0.4 OR character_presence < 1.0 when required cast is non-empty.
 pass = weighted_score >= {pass_score} AND no hard-fail.
 
-Weights: narrative 0.25, composition 0.20, style 0.20, technical 0.15, continuity 0.10, clean_frame 0.10
+Weights: narrative 0.20, composition 0.15, style 0.15, technical 0.10, continuity 0.10, clean_frame 0.10, character_presence 0.20
 
 Return:
 {{
@@ -149,10 +162,13 @@ Return:
     "style_fit": 0.0,
     "technical_clean": 0.0,
     "continuity": 0.0,
-    "clean_frame": 0.0
+    "clean_frame": 0.0,
+    "character_presence": 0.0
   }},
+  "visible_characters": ["names you can identify"],
+  "missing_characters": ["required names not visible"],
   "issues": ["..."],
-  "rewrite_notes": "specific prompt fixes if fail, else empty"
+  "rewrite_notes": "if fail, start with: include ALL of: Name1, Name2... then other fixes"
 }}
 """
 

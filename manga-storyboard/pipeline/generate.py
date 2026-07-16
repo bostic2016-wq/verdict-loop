@@ -55,7 +55,7 @@ def generate_panel_image(
         return _pollinations(full_prompt, out_path, width, height, seed)
 
 
-IMAGE_PIPELINE_BUILD = "2026-07-16-openrouter-v2"
+IMAGE_PIPELINE_BUILD = "2026-07-16-cast-speed-v3"
 
 
 def _resolve_backend(settings: dict[str, Any]) -> str:
