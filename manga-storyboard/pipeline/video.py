@@ -39,16 +39,25 @@ def build_video_prompt(bible: dict[str, Any], panels: list[dict[str, Any]]) -> s
     )
 
 
+def _normalize_aspect_ratio(value: Any) -> str:
+    """Guard against YAML parsing 16:9 as the base-60 integer 969."""
+    text = str(value or "").strip()
+    if ":" in text:
+        return text
+    known = {"969": "16:9", "549": "9:16", "243": "4:3", "184": "3:4"}
+    return known.get(text, "16:9")
+
+
 def _submit_video_job(
     settings: dict[str, Any],
     prompt: str,
     frame_paths: Iterable[Path] | None = None,
 ) -> dict[str, Any]:
     vid_cfg = _video_settings(settings)
-    model = vid_cfg.get("model") or "google/veo-3.1-lite"
+    model = str(vid_cfg.get("model") or "google/veo-3.1-lite")
     duration = int(vid_cfg.get("duration", 4))
-    resolution = vid_cfg.get("resolution", "720p")
-    aspect_ratio = vid_cfg.get("aspect_ratio", "16:9")
+    resolution = str(vid_cfg.get("resolution", "720p"))
+    aspect_ratio = _normalize_aspect_ratio(vid_cfg.get("aspect_ratio", "16:9"))
 
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
@@ -79,9 +88,15 @@ def _submit_video_job(
         "HTTP-Referer": "https://github.com/bostic2016-wq/verdict-loop",
         "X-Title": "Manga Storyboard Video",
     }
-    timeout = httpx.Timeout(30.0, connect=10.0)
+    timeout = httpx.Timeout(60.0, connect=10.0)
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=headers, json=payload)
+        if resp.status_code >= 400 and "input_references" in payload:
+            # Some video models reject reference images — retry text-only
+            body = resp.text[:400]
+            if "input_reference" in body or "reference" in body.lower() or resp.status_code == 400:
+                payload.pop("input_references", None)
+                resp = client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             raise VideoGenError(f"OpenRouter video error {resp.status_code}: {resp.text[:400]}")
         return resp.json()
@@ -129,6 +144,53 @@ def _extract_video_url(job: dict[str, Any]) -> str:
     raise VideoGenError(f"Completed video job missing URL: {str(job)[:300]}")
 
 
+def submit_first5_clip(
+    settings: dict[str, Any],
+    bible: dict[str, Any],
+    panels: list[dict[str, Any]],
+    panel_paths: list[Path],
+) -> dict[str, Any]:
+    """Submit a video job for the first panels. Returns the job dict (id, status, polling_url)."""
+    if not panels:
+        raise VideoGenError("No panels available for video generation")
+    prompt = build_video_prompt(bible, panels)
+    return _submit_video_job(settings, prompt, frame_paths=panel_paths)
+
+
+def check_video_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Single non-blocking status check. Returns {'status': ..., 'url': ...?}."""
+    polling_url = job.get("polling_url")
+    if not polling_url:
+        raise VideoGenError(f"Video job missing polling_url: {str(job)[:200]}")
+    key = os.getenv("OPENROUTER_API_KEY")
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    with httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0), follow_redirects=True) as client:
+        resp = client.get(polling_url, headers=headers)
+        if resp.status_code >= 400:
+            raise VideoGenError(f"Polling error {resp.status_code}: {resp.text[:300]}")
+        data = resp.json()
+    status = (data.get("status") or "").lower()
+    result: dict[str, Any] = {"status": status}
+    if status == "completed":
+        result["url"] = _extract_video_url(data)
+    elif status in {"failed", "cancelled", "expired"}:
+        result["error"] = data.get("error") or f"job {status}"
+    return result
+
+
+def download_video(url: str, out_path: Path) -> Path:
+    key = os.getenv("OPENROUTER_API_KEY")
+    headers = {"Authorization": f"Bearer {key}"} if key and "openrouter.ai" in url else {}
+    timeout = httpx.Timeout(180.0, connect=10.0)
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        resp = client.get(url, headers=headers)
+        if resp.status_code >= 400:
+            raise VideoGenError(f"Downloading video failed {resp.status_code}: {resp.text[:300]}")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(resp.content)
+    return out_path
+
+
 def generate_first5_clip(
     settings: dict[str, Any],
     bible: dict[str, Any],
@@ -136,24 +198,11 @@ def generate_first5_clip(
     panel_paths: list[Path],
     out_path: Path,
 ) -> Path:
-    """Generate a short clip from the first 5 panels and save it to out_path."""
-    if not panels or len(panels) < 1:
-        raise VideoGenError("No panels available for video generation")
-
-    prompt = build_video_prompt(bible, panels)
-    submit = _submit_video_job(settings, prompt, frame_paths=panel_paths)
-
+    """Blocking variant: submit, poll to completion, download."""
+    submit = submit_first5_clip(settings, bible, panels, panel_paths)
     vid_cfg = _video_settings(settings)
-    max_wait = float(vid_cfg.get("max_wait_seconds", 240))
+    max_wait = float(vid_cfg.get("max_wait_seconds", 600))
     job = _poll_video_job(submit, max_wait_s=max_wait)
     url = _extract_video_url(job)
-
-    timeout = httpx.Timeout(120.0, connect=10.0)
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        resp = client.get(url)
-        if resp.status_code >= 400:
-            raise VideoGenError(f"Downloading video failed {resp.status_code}: {resp.text[:300]}")
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(resp.content)
-    return out_path
+    return download_video(url, out_path)
 

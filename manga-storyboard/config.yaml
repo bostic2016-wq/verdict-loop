@@ -51,9 +51,10 @@ video:
   enabled: false
   model: google/veo-3.1-lite
   duration: 4        # seconds
-  resolution: 720p
-  aspect_ratio: 16:9
-  max_wait_seconds: 240
+  resolution: "720p"
+  # Quoted — unquoted 16:9 is parsed by YAML as the number 969
+  aspect_ratio: "16:9"
+  max_wait_seconds: 600
 
 costs:
   per_1k_tokens_usd: 0.002   # rough estimate for LLM calls (for usage display only)

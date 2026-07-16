@@ -32,7 +32,7 @@ from pipeline.style_library import (
     upsert_character,
 )
 from pipeline.tokens import load_usage, record_image, record_video, summarize_usage
-from pipeline.video import VideoGenError, generate_first5_clip
+from pipeline.video import VideoGenError, check_video_job, download_video, submit_first5_clip
 from pipeline.util import list_styles, load_settings, new_run_dir, save_json
 
 st.set_page_config(page_title="Manga Storyboard", page_icon="📖", layout="wide")
@@ -68,6 +68,8 @@ DEFAULTS = {
     "sequence": None,
     "qa_round": 0,
     "pilot_video_path": None,
+    "video_error": None,
+    "video_job": None,
 }
 
 
@@ -546,49 +548,8 @@ elif step in {"pilot", "continue"}:
                                 ]
                             st.rerun()
 
-    # Optional: generate a short clip from the first 5 panels
-    if step == "pilot" and st.session_state.pilot_panels:
-        st.divider()
-        st.markdown("#### 5-panel video (optional)")
-        if st.session_state.get("video_enabled", False):
-            if st.session_state.get("pilot_video_path"):
-                st.video(st.session_state.pilot_video_path)
-            if st.button("Generate 5-panel video", use_container_width=True):
-                if not run_dir:
-                    st.error("Missing run dir")
-                else:
-                    out = run_dir / "video" / "pilot_5.mp4"
-                    panel_paths = [
-                        Path(p["path"]) for p in st.session_state.pilot_panels if p.get("path") and Path(p["path"]).exists()
-                    ]
-                    if not panel_paths:
-                        st.error("No panel images found on disk for video generation.")
-                    else:
-                        with st.spinner("Generating 5-panel video clip…"):
-                            try:
-                                vpath = generate_first5_clip(
-                                    settings,
-                                    bible,
-                                    st.session_state.pilot_panels,
-                                    panel_paths,
-                                    out,
-                                )
-                            except VideoGenError as e:
-                                st.error(str(e))
-                                st.stop()
-                            except Exception as e:  # noqa: BLE001
-                                st.error(f"Video generation failed: {e}")
-                                st.stop()
-                        st.session_state.pilot_video_path = str(vpath)
-                        try:
-                            record_video(run_dir, 1)
-                        except Exception:  # noqa: BLE001
-                            pass
-                        st.rerun()
-        else:
-            st.caption("Turn on “5-panel video” in the sidebar to enable clip generation.")
-
-    # Token / cost summary for this run
+    # Token / cost summary for this run (rendered BEFORE video so a video
+    # failure can never hide the spend numbers)
     if run_dir:
         try:
             summary = summarize_usage(load_usage(run_dir), settings)
@@ -606,6 +567,71 @@ elif step in {"pilot", "continue"}:
                 )
         except Exception:
             pass
+
+    # Optional: generate a short clip from the first 5 panels
+    if step == "pilot" and st.session_state.pilot_panels:
+        st.divider()
+        st.markdown("#### 5-panel video (optional)")
+        if st.session_state.get("video_enabled", False):
+            if st.session_state.get("pilot_video_path"):
+                st.video(st.session_state.pilot_video_path)
+            if st.session_state.get("video_error"):
+                st.error(st.session_state.video_error)
+
+            job = st.session_state.get("video_job")
+            if job:
+                # A job is in flight — poll once per rerun, keep the page alive
+                try:
+                    status = check_video_job(job)
+                except VideoGenError as e:
+                    st.session_state.video_error = str(e)
+                    st.session_state.video_job = None
+                    st.rerun()
+                if status["status"] == "completed":
+                    try:
+                        out = run_dir / "video" / "pilot_5.mp4"
+                        vpath = download_video(status["url"], out)
+                        st.session_state.pilot_video_path = str(vpath)
+                        record_video(run_dir, 1)
+                    except Exception as e:  # noqa: BLE001
+                        st.session_state.video_error = f"Video download failed: {e}"
+                    st.session_state.video_job = None
+                    st.rerun()
+                elif status["status"] in {"failed", "cancelled", "expired"}:
+                    st.session_state.video_error = f"Video job {status['status']}: {status.get('error', '')}"
+                    st.session_state.video_job = None
+                    st.rerun()
+                else:
+                    st.info(f"Video rendering… status: {status['status']}. This can take several minutes.")
+                    import time as _time
+
+                    _time.sleep(5)
+                    st.rerun()
+            elif st.button("Generate 5-panel video", use_container_width=True):
+                st.session_state.video_error = None
+                if not run_dir:
+                    st.session_state.video_error = "Missing run dir"
+                else:
+                    panel_paths = [
+                        Path(p["path"]) for p in st.session_state.pilot_panels if p.get("path") and Path(p["path"]).exists()
+                    ]
+                    if not panel_paths:
+                        st.session_state.video_error = "No panel images found on disk for video generation."
+                    else:
+                        try:
+                            st.session_state.video_job = submit_first5_clip(
+                                settings,
+                                bible,
+                                st.session_state.pilot_panels,
+                                panel_paths,
+                            )
+                        except VideoGenError as e:
+                            st.session_state.video_error = str(e)
+                        except Exception as e:  # noqa: BLE001
+                            st.session_state.video_error = f"Video submit failed: {e}"
+                st.rerun()
+        else:
+            st.caption("Turn on “5-panel video” in the sidebar to enable clip generation.")
 
     st.divider()
     a, b, c = st.columns(3)
