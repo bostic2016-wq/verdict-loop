@@ -1,15 +1,17 @@
-"""Video generation via OpenRouter `/videos` API."""
+"""Video generation via OpenRouter `/videos` API — selected-panel shot builder."""
 
 from __future__ import annotations
 
 import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
 import httpx
 
 from pipeline.generate import _image_data_url
+from pipeline.util import save_json
 
 
 class VideoGenError(RuntimeError):
@@ -20,23 +22,80 @@ def _video_settings(settings: dict[str, Any]) -> dict[str, Any]:
     return settings.get("video") or {}
 
 
-def build_video_prompt(bible: dict[str, Any], panels: list[dict[str, Any]]) -> str:
-    """Compile a short sequence description from the first N panels."""
+def build_shot_prompt(
+    bible: dict[str, Any],
+    panels: list[dict[str, Any]],
+    *,
+    direction: str = "",
+    motion_style: str = "subtle",
+) -> str:
+    """Compile a strict shot-spec prompt for selected panel(s)."""
     aesthetic = bible.get("aesthetic_name") or bible.get("aesthetic") or ""
     tone = bible.get("tone") or ""
+    chars = bible.get("characters") or []
+    char_lock = "; ".join(
+        f"{c.get('name')}: {c.get('look') or 'keep design from reference'}" for c in chars if c.get("name")
+    )
+
+    indexes = [str(p.get("index")) for p in panels]
+    single = len(panels) == 1
+
     beats = []
     for p in panels:
         idx = p.get("index")
-        beat = f"Shot {idx}: {p.get('shot_type', 'medium')} of {p.get('subject', '')} — {p.get('action', '')}"
-        if p.get("emotion"):
-            beat += f" (emotion: {p.get('emotion')})"
-        beats.append(beat.strip())
-    seq = " ".join(beats)
-    return (
-        f"Cinematic anime-style sequence in the aesthetic of {aesthetic}."
-        f" Tone: {tone or 'storyboard animatic'}."
-        f" Animate the following shots in order with gentle camera motion: {seq}"
-    )
+        cast = ", ".join(p.get("characters") or []) or "as shown"
+        beat = (
+            f"KEYFRAME Panel {idx}: shot={p.get('shot_type', 'medium')}; "
+            f"subject={p.get('subject', '')}; action={p.get('action', '')}; "
+            f"emotion={p.get('emotion', '')}; setting={p.get('setting', '')}; "
+            f"characters={cast}"
+        )
+        beats.append(beat)
+
+    motion_map = {
+        "subtle": "subtle natural micro-motion only (hair, cloth, eyes, breathing)",
+        "action": "dynamic action motion matching the panel beat",
+        "camera pan": "slow camera pan while holding composition",
+        "zoom-in": "gentle camera push-in / zoom toward the subject",
+        "hold frame": "near-static hold with tiny life motion only",
+    }
+    motion = motion_map.get(motion_style, motion_map["subtle"])
+
+    if single:
+        core = (
+            f"Animate ONE manga panel as a short clip. "
+            f"Hold the original Panel {indexes[0]} composition exactly. "
+            f"Only animate: {motion}. "
+            f"Do NOT invent a new scene. Do NOT redesign characters. "
+            f"No scene change, no costume change, no extra people."
+        )
+    else:
+        core = (
+            f"Animate a short sequence using these panels IN ORDER as keyframes: {', '.join(indexes)}. "
+            f"Move through each panel beat without skipping indexes. "
+            f"Use each selected panel image as a visual keyframe/reference. "
+            f"Motion style: {motion}. "
+            f"Do NOT invent new scenes or drop characters."
+        )
+
+    parts = [
+        f"Cinematic anime-style clip matching aesthetic: {aesthetic}.",
+        f"Tone: {tone or 'storyboard animatic'}.",
+        core,
+        "Use the attached source panel image(s) as the visual reference — match faces, outfits, colors, and framing.",
+        f"Character lock: {char_lock or 'keep all characters on-model from references'}.",
+        "Forbidden: wrong panel, wrong character, blurry mush, washed colors, random aura/energy unless the beat requires it,",
+        "speech bubbles, text overlays, watermarks.",
+        " ".join(beats),
+    ]
+    if direction.strip():
+        parts.append(f"Director note: {direction.strip()}")
+    return " ".join(p for p in parts if p)
+
+
+# Back-compat alias used by older callers
+def build_video_prompt(bible: dict[str, Any], panels: list[dict[str, Any]]) -> str:
+    return build_shot_prompt(bible, panels)
 
 
 def _normalize_aspect_ratio(value: Any) -> str:
@@ -52,12 +111,16 @@ def _submit_video_job(
     settings: dict[str, Any],
     prompt: str,
     frame_paths: Iterable[Path] | None = None,
+    *,
+    duration: int | None = None,
+    aspect_ratio: str | None = None,
+    resolution: str | None = None,
 ) -> dict[str, Any]:
     vid_cfg = _video_settings(settings)
     model = str(vid_cfg.get("model") or "google/veo-3.1-lite")
-    duration = int(vid_cfg.get("duration", 4))
-    resolution = str(vid_cfg.get("resolution", "720p"))
-    aspect_ratio = _normalize_aspect_ratio(vid_cfg.get("aspect_ratio", "16:9"))
+    duration = int(duration if duration is not None else vid_cfg.get("duration", 4))
+    resolution = str(resolution or vid_cfg.get("resolution", "720p"))
+    aspect_ratio = _normalize_aspect_ratio(aspect_ratio or vid_cfg.get("aspect_ratio", "16:9"))
 
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
@@ -76,10 +139,14 @@ def _submit_video_job(
 
     frames = [p for p in (frame_paths or []) if p and Path(p).exists()]
     if frames:
-        # Use input_references to bias style toward the panels
+        # Prefer first frame as primary for single-panel fidelity
         payload["input_references"] = [
             {"type": "image_url", "image_url": {"url": _image_data_url(Path(p))}}
             for p in list(frames)[:4]
+        ]
+        # Also try frame_images for image-to-video models that support it
+        payload["frame_images"] = [
+            {"type": "image_url", "image_url": {"url": _image_data_url(Path(frames[0]))}}
         ]
 
     headers = {
@@ -91,11 +158,15 @@ def _submit_video_job(
     timeout = httpx.Timeout(60.0, connect=10.0)
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code >= 400 and "input_references" in payload:
-            # Some video models reject reference images — retry text-only
-            body = resp.text[:400]
-            if "input_reference" in body or "reference" in body.lower() or resp.status_code == 400:
+        if resp.status_code >= 400 and ("frame_images" in payload or "input_references" in payload):
+            body = resp.text[:500].lower()
+            # Strip unsupported fields and retry once
+            if "frame_image" in body or "frame_images" in body:
+                payload.pop("frame_images", None)
+                resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 400 and ("input_reference" in body or "reference" in body):
                 payload.pop("input_references", None)
+                payload.pop("frame_images", None)
                 resp = client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             raise VideoGenError(f"OpenRouter video error {resp.status_code}: {resp.text[:400]}")
@@ -132,7 +203,6 @@ def _poll_video_job(job: dict[str, Any], max_wait_s: float = 240.0) -> dict[str,
 
 
 def _extract_video_url(job: dict[str, Any]) -> str:
-    # Prefer direct content URLs, then unsigned_urls if present.
     content = job.get("content") or []
     if content and isinstance(content, list):
         url = content[0].get("url")
@@ -144,17 +214,48 @@ def _extract_video_url(job: dict[str, Any]) -> str:
     raise VideoGenError(f"Completed video job missing URL: {str(job)[:300]}")
 
 
+def submit_selected_clip(
+    settings: dict[str, Any],
+    bible: dict[str, Any],
+    panels: list[dict[str, Any]],
+    panel_paths: list[Path],
+    *,
+    direction: str = "",
+    motion_style: str = "subtle",
+    duration: int | None = None,
+    aspect_ratio: str | None = None,
+) -> dict[str, Any]:
+    """Submit a video job for user-selected panels. Returns job + prompt metadata."""
+    if not panels:
+        raise VideoGenError("Select at least one panel to animate")
+    prompt = build_shot_prompt(bible, panels, direction=direction, motion_style=motion_style)
+    job = _submit_video_job(
+        settings,
+        prompt,
+        frame_paths=panel_paths,
+        duration=duration,
+        aspect_ratio=aspect_ratio,
+    )
+    return {
+        "job": job,
+        "prompt": prompt,
+        "panel_indexes": [p.get("index") for p in panels],
+        "direction": direction,
+        "motion_style": motion_style,
+        "model": (_video_settings(settings).get("model") or "google/veo-3.1-lite"),
+        "output_id": uuid.uuid4().hex[:10],
+    }
+
+
+# Back-compat wrappers
 def submit_first5_clip(
     settings: dict[str, Any],
     bible: dict[str, Any],
     panels: list[dict[str, Any]],
     panel_paths: list[Path],
 ) -> dict[str, Any]:
-    """Submit a video job for the first panels. Returns the job dict (id, status, polling_url)."""
-    if not panels:
-        raise VideoGenError("No panels available for video generation")
-    prompt = build_video_prompt(bible, panels)
-    return _submit_video_job(settings, prompt, frame_paths=panel_paths)
+    result = submit_selected_clip(settings, bible, panels, panel_paths)
+    return result["job"]
 
 
 def check_video_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -191,6 +292,14 @@ def download_video(url: str, out_path: Path) -> Path:
     return out_path
 
 
+def save_output_record(run_dir: Path, record: dict[str, Any]) -> Path:
+    out_id = record.get("output_id") or uuid.uuid4().hex[:10]
+    dest = run_dir / "outputs" / f"output_{out_id}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    save_json(dest, record)
+    return dest
+
+
 def generate_first5_clip(
     settings: dict[str, Any],
     bible: dict[str, Any],
@@ -199,10 +308,9 @@ def generate_first5_clip(
     out_path: Path,
 ) -> Path:
     """Blocking variant: submit, poll to completion, download."""
-    submit = submit_first5_clip(settings, bible, panels, panel_paths)
+    meta = submit_selected_clip(settings, bible, panels, panel_paths)
     vid_cfg = _video_settings(settings)
     max_wait = float(vid_cfg.get("max_wait_seconds", 600))
-    job = _poll_video_job(submit, max_wait_s=max_wait)
+    job = _poll_video_job(meta["job"], max_wait_s=max_wait)
     url = _extract_video_url(job)
     return download_video(url, out_path)
-

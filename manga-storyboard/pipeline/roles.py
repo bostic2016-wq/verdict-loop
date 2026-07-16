@@ -179,6 +179,45 @@ Return:
 }}
 """
 
+VIDEO_VISION_SYSTEM = """You are a ruthless manga animation QA editor.
+Judge whether a generated VIDEO matches its source panel(s).
+Return STRICT JSON only.
+Wrong panel / wrong scene / severe blur are HARD FAILS."""
+
+VIDEO_VISION_USER = """Creative bible (excerpt):
+{bible_excerpt}
+
+Selected source panel briefs:
+{panels}
+
+Director direction:
+{direction}
+
+Score dimensions 0–1: panel_match, character_consistency, outfit_consistency, style_match, motion_relevance, technical_quality.
+panel_match = how closely video frames match the source panel composition/subject/action.
+technical_quality = sharpness, clarity, no mushy blur.
+Hard-fail if panel_match < 0.45 OR technical_quality < 0.4 OR character_consistency < 0.4.
+pass = weighted_score >= {pass_score} AND no hard-fail.
+
+Weights: panel_match 0.30, character 0.20, outfit 0.15, style 0.10, motion 0.10, technical 0.15
+
+Return:
+{{
+  "pass": true/false,
+  "score": 0.0,
+  "dimensions": {{
+    "panel_match": 0.0,
+    "character_consistency": 0.0,
+    "outfit_consistency": 0.0,
+    "style_match": 0.0,
+    "motion_relevance": 0.0,
+    "technical_quality": 0.0
+  }},
+  "issues": ["..."],
+  "rewrite_notes": "concrete fix instructions for regeneration"
+}}
+"""
+
 SEQUENCE_SYSTEM = """You are a manga editor reviewing a storyboard filmstrip as a SEQUENCE.
 Judge pacing, shot variety, emotional arc, character consistency, readability.
 Return STRICT JSON only."""

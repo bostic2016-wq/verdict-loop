@@ -55,6 +55,11 @@ video:
   # Quoted — unquoted 16:9 is parsed by YAML as the number 969
   aspect_ratio: "16:9"
   max_wait_seconds: 600
+  motion_style: subtle
+  qa:
+    enabled: true
+    pass_score: 0.65
+    auto_retry: false
 
 costs:
   per_1k_tokens_usd: 0.002   # rough estimate for LLM calls (for usage display only)

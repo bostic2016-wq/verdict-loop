@@ -6,14 +6,22 @@ Local web app that turns a manga **transcript PDF** into storyboard panels — w
 **Quality:** Creative bible → panel grammar → per-panel vision QA.  
 **Style:** Built-in **JJK-inspired** / **HxH-inspired** aesthetic presets + your own character drawings as references.
 
-## What's new in v5
+## What's new in v5+
 
 - **Image model profiles** (sidebar):
   - `Nano Banana Pro → FLUX` (default, strong multi-reference fidelity)
   - `Seedream 4.5 → FLUX` (anime-focused OpenRouter model)
-- **Optional 5-panel video**: toggle in the sidebar, then generate a short OpenRouter clip from the pilot panels
+- **Create drawer** on the filmstrip:
+  1. Select panels (checkboxes)
+  2. Choose source: Selected panels / Next story beat / Custom note
+  3. Choose output: Still panels / Video clip
+  4. Optional direction → Generate
+  5. Review with Accept / Regenerate / Edit direction
+- **Video QA**: samples frames from the clip and scores panel match, character/outfit consistency, blur, and motion
 - **Run usage / token view**: estimated tokens, image counts, video counts, and rough USD cost per run
 - Full-color panels by default; power auras only when the script calls for them; outfit consistency locked to character looks/refs
+
+**Tip:** For video, select **one** panel first — single-panel animation stays much closer to your art than multi-panel clips.
 
 ## Public demo (Streamlit Community Cloud)
 

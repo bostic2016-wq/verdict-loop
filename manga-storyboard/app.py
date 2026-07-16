@@ -32,7 +32,14 @@ from pipeline.style_library import (
     upsert_character,
 )
 from pipeline.tokens import load_usage, record_image, record_video, summarize_usage
-from pipeline.video import VideoGenError, check_video_job, download_video, submit_first5_clip
+from pipeline.video import (
+    VideoGenError,
+    check_video_job,
+    download_video,
+    save_output_record,
+    submit_selected_clip,
+)
+from pipeline.video_qa import critique_video, save_qa
 from pipeline.util import list_styles, load_settings, new_run_dir, save_json
 
 st.set_page_config(page_title="Manga Storyboard", page_icon="📖", layout="wide")
@@ -67,9 +74,13 @@ DEFAULTS = {
     "all_panels": [],
     "sequence": None,
     "qa_round": 0,
-    "pilot_video_path": None,
-    "video_error": None,
-    "video_job": None,
+    "selected_panels": [],
+    "create_source": "Selected panels",
+    "create_output": "Still panels",
+    "create_direction": "",
+    "create_error": None,
+    "create_job_meta": None,  # pending video submit metadata
+    "create_result": None,    # latest still/video output review card
 }
 
 
@@ -172,14 +183,7 @@ with st.sidebar:
     st.caption(f"Active: {profile_labels.get(chosen, chosen)}")
 
     st.divider()
-    video_cfg = settings.get("video") or {}
-    default_video_enabled = bool(video_cfg.get("enabled", False))
-    video_enabled = st.checkbox(
-        "Enable 5-panel video (experimental)",
-        value=st.session_state.get("video_enabled", default_video_enabled),
-        help="When ON, you can turn the first 5 approved panels into a short clip via OpenRouter video.",
-    )
-    st.session_state.video_enabled = video_enabled
+    st.caption("Use the Create drawer on the filmstrip to make stills or video from selected panels.")
 
     if st.session_state.get("run_dir"):
         try:
@@ -502,54 +506,42 @@ elif step in {"pilot", "continue"}:
                 f"Sequence notes: {seq.get('notes', '')} · issues: {', '.join(seq.get('pacing_issues') or []) or '—'}"
             )
 
+    selected = set(st.session_state.get("selected_panels") or [])
+
     if not panels:
         st.info("No panels yet.")
     else:
-        # Render all panels in rows of 5
+        q1, q2, q3 = st.columns(3)
+        with q1:
+            if st.button("Select first 5", use_container_width=True):
+                st.session_state.selected_panels = [int(p.get("index")) for p in panels[:5]]
+                st.rerun()
+        with q2:
+            if st.button("Clear selection", use_container_width=True):
+                st.session_state.selected_panels = []
+                st.rerun()
+        with q3:
+            st.caption(f"{len(selected)} selected")
+
         for row_start in range(0, len(panels), 5):
             chunk = panels[row_start : row_start + 5]
             cols = st.columns(len(chunk))
             for col, p in zip(cols, chunk):
+                idx = int(p.get("index") or 0)
                 with col:
                     status = "needs review" if p.get("needs_review") else ("passed" if p.get("passed") else "check")
-                    st.markdown(f"**P{p.get('index')}** · `{p.get('shot_type')}` · {status}")
+                    st.markdown(f"**P{idx}** · `{p.get('shot_type')}` · {status}")
                     if p.get("path") and Path(p["path"]).exists():
                         st.image(p["path"], use_container_width=True)
                     st.caption(p.get("dialogue") or p.get("action") or "")
-                    edit = st.text_input("Edit note", key=f"edit_{p.get('index')}", placeholder="optional tweak")
-                    if st.button("Regen", key=f"regen_{p.get('index')}", use_container_width=True):
-                        if not run_dir:
-                            st.error("Missing run dir")
-                        else:
-                            with st.spinner(f"Regenerating panel {p.get('index')}…"):
-                                try:
-                                    updated = regenerate_one(
-                                        router(),
-                                        settings,
-                                        bible,
-                                        p,
-                                        run_dir,
-                                        edit_notes=edit,
-                                    )
-                                except Exception as e:  # noqa: BLE001
-                                    st.error(str(e))
-                                    st.stop()
-                            # Replace in all_panels
-                            new_list = []
-                            for old in st.session_state.all_panels:
-                                if old.get("index") == updated.get("index"):
-                                    new_list.append(updated)
-                                else:
-                                    new_list.append(old)
-                            st.session_state.all_panels = new_list
-                            if step == "pilot":
-                                st.session_state.pilot_panels = [
-                                    x for x in new_list if int(x.get("index", 0)) <= 5
-                                ]
-                            st.rerun()
+                    checked = st.checkbox("Select", value=idx in selected, key=f"sel_{idx}")
+                    if checked and idx not in selected:
+                        selected.add(idx)
+                    elif not checked and idx in selected:
+                        selected.discard(idx)
+        st.session_state.selected_panels = sorted(selected)
 
-    # Token / cost summary for this run (rendered BEFORE video so a video
-    # failure can never hide the spend numbers)
+    # Usage summary before Create so errors never hide spend
     if run_dir:
         try:
             summary = summarize_usage(load_usage(run_dir), settings)
@@ -560,109 +552,278 @@ elif step in {"pilot", "continue"}:
                 )
                 if summary.get("by_role"):
                     st.caption("By role: " + ", ".join(f"{k}={v}" for k, v in summary["by_role"].items()))
-                bd = summary.get("breakdown_usd") or {}
-                st.caption(
-                    f"Breakdown — LLM ${bd.get('llm', 0):.3f} · images ${bd.get('images', 0):.3f} · "
-                    f"videos ${bd.get('videos', 0):.3f}"
-                )
         except Exception:
             pass
 
-    # Optional: generate a short clip from the first 5 panels
-    if step == "pilot" and st.session_state.pilot_panels:
-        st.divider()
-        st.markdown("#### 5-panel video (optional)")
-        if st.session_state.get("video_enabled", False):
-            if st.session_state.get("pilot_video_path"):
-                st.video(st.session_state.pilot_video_path)
-            if st.session_state.get("video_error"):
-                st.error(st.session_state.video_error)
-
-            job = st.session_state.get("video_job")
-            if job:
-                # A job is in flight — poll once per rerun, keep the page alive
-                try:
-                    status = check_video_job(job)
-                except VideoGenError as e:
-                    st.session_state.video_error = str(e)
-                    st.session_state.video_job = None
-                    st.rerun()
-                if status["status"] == "completed":
-                    try:
-                        out = run_dir / "video" / "pilot_5.mp4"
-                        vpath = download_video(status["url"], out)
-                        st.session_state.pilot_video_path = str(vpath)
-                        record_video(run_dir, 1)
-                    except Exception as e:  # noqa: BLE001
-                        st.session_state.video_error = f"Video download failed: {e}"
-                    st.session_state.video_job = None
-                    st.rerun()
-                elif status["status"] in {"failed", "cancelled", "expired"}:
-                    st.session_state.video_error = f"Video job {status['status']}: {status.get('error', '')}"
-                    st.session_state.video_job = None
-                    st.rerun()
-                else:
-                    st.info(f"Video rendering… status: {status['status']}. This can take several minutes.")
-                    import time as _time
-
-                    _time.sleep(5)
-                    st.rerun()
-            elif st.button("Generate 5-panel video", use_container_width=True):
-                st.session_state.video_error = None
-                if not run_dir:
-                    st.session_state.video_error = "Missing run dir"
-                else:
-                    panel_paths = [
-                        Path(p["path"]) for p in st.session_state.pilot_panels if p.get("path") and Path(p["path"]).exists()
-                    ]
-                    if not panel_paths:
-                        st.session_state.video_error = "No panel images found on disk for video generation."
-                    else:
-                        try:
-                            st.session_state.video_job = submit_first5_clip(
-                                settings,
-                                bible,
-                                st.session_state.pilot_panels,
-                                panel_paths,
-                            )
-                        except VideoGenError as e:
-                            st.session_state.video_error = str(e)
-                        except Exception as e:  # noqa: BLE001
-                            st.session_state.video_error = f"Video submit failed: {e}"
-                st.rerun()
-        else:
-            st.caption("Turn on “5-panel video” in the sidebar to enable clip generation.")
-
+    # ---------- Create drawer (unified still + video) ----------
     st.divider()
-    a, b, c = st.columns(3)
-    with a:
-        if step == "pilot" and st.button("Looks good — continue", type="primary", use_container_width=True):
-            st.session_state.step = "continue"
+    st.markdown("### Create")
+    st.caption("Choose source → output → optional direction → Generate. Same review actions for stills and video.")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        source = st.radio(
+            "Source",
+            ["Selected panels", "Next story beat", "Custom note"],
+            index=["Selected panels", "Next story beat", "Custom note"].index(
+                st.session_state.get("create_source", "Selected panels")
+            ),
+            horizontal=True,
+        )
+        st.session_state.create_source = source
+    with c2:
+        output = st.radio(
+            "Output",
+            ["Still panels", "Video clip"],
+            index=["Still panels", "Video clip"].index(st.session_state.get("create_output", "Still panels")),
+            horizontal=True,
+        )
+        st.session_state.create_output = output
+
+    direction = st.text_input(
+        "Direction (optional)",
+        value=st.session_state.get("create_direction", ""),
+        placeholder="e.g. close-up on the punch · animate only hair and camera push-in",
+    )
+    st.session_state.create_direction = direction
+
+    with st.expander("Advanced video options", expanded=False):
+        vid_cfg = settings.get("video") or {}
+        duration = st.selectbox("Duration (sec)", [4, 5, 6, 8], index=0)
+        aspect = st.selectbox("Aspect ratio", ["9:16", "16:9", "3:4"], index=0)
+        motion = st.selectbox(
+            "Motion style",
+            ["subtle", "action", "camera pan", "zoom-in", "hold frame"],
+            index=0,
+        )
+        st.caption(f"Model: {vid_cfg.get('model', 'google/veo-3.1-lite')}")
+
+    selected_idxs = st.session_state.get("selected_panels") or []
+    if output == "Video clip" and len(selected_idxs) > 1:
+        st.warning("Multi-panel video is less exact — single-panel animation is recommended.")
+    if output == "Video clip" and source != "Selected panels":
+        st.info("Video clips need selected panels as the source.")
+
+    if st.session_state.get("create_error"):
+        st.error(st.session_state.create_error)
+
+    # Poll in-flight video job
+    job_meta = st.session_state.get("create_job_meta")
+    if job_meta and job_meta.get("job"):
+        try:
+            status = check_video_job(job_meta["job"])
+        except VideoGenError as e:
+            st.session_state.create_error = str(e)
+            st.session_state.create_job_meta = None
             st.rerun()
-    with b:
-        if step == "continue" and st.button("Generate next 5", type="primary", use_container_width=True):
-            if not run_dir:
-                st.error("Missing run dir")
+        if status["status"] == "completed" and run_dir:
+            out_id = job_meta.get("output_id", "clip")
+            out = run_dir / "video" / f"output_{out_id}.mp4"
+            try:
+                vpath = download_video(status["url"], out)
+                record_video(run_dir, 1)
+                qa_cfg = (settings.get("video") or {}).get("qa") or {}
+                qa = {"pass": True, "score": 1.0, "issues": [], "rewrite_notes": ""}
+                if qa_cfg.get("enabled", True):
+                    with st.spinner("Running video QA…"):
+                        src_panels = [
+                            p
+                            for p in panels
+                            if int(p.get("index", -1)) in set(job_meta.get("panel_indexes") or [])
+                        ]
+                        src_paths = [Path(p["path"]) for p in src_panels if p.get("path") and Path(p["path"]).exists()]
+                        qa = critique_video(
+                            router(),
+                            bible,
+                            src_panels,
+                            vpath,
+                            src_paths,
+                            direction=job_meta.get("direction") or "",
+                            pass_score=float(qa_cfg.get("pass_score", 0.65)),
+                            expected_duration=float((settings.get("video") or {}).get("duration", 4)),
+                        )
+                        save_qa(run_dir, out_id, qa)
+                record = {
+                    "output_id": out_id,
+                    "type": "video",
+                    "panel_indexes": job_meta.get("panel_indexes"),
+                    "prompt": job_meta.get("prompt"),
+                    "model": job_meta.get("model"),
+                    "path": str(vpath),
+                    "direction": job_meta.get("direction"),
+                    "qa": qa,
+                    "accepted": False,
+                }
+                save_output_record(run_dir, record)
+                st.session_state.create_result = record
+            except Exception as e:  # noqa: BLE001
+                st.session_state.create_error = f"Video finish failed: {e}"
+            st.session_state.create_job_meta = None
+            st.rerun()
+        elif status["status"] in {"failed", "cancelled", "expired"}:
+            st.session_state.create_error = f"Video job {status['status']}: {status.get('error', '')}"
+            st.session_state.create_job_meta = None
+            st.rerun()
+        else:
+            st.info(f"Video rendering… status: {status['status']}. This can take a few minutes.")
+            import time as _time
+
+            _time.sleep(5)
+            st.rerun()
+
+    # Review card for latest create result
+    result = st.session_state.get("create_result")
+    if result:
+        st.markdown("#### Review")
+        if result.get("type") == "video" and result.get("path") and Path(result["path"]).exists():
+            st.video(result["path"])
+        qa = result.get("qa") or {}
+        if qa.get("pass"):
+            st.success(f"QA passed · score {qa.get('score', '—')}")
+        else:
+            st.warning(f"QA needs work · score {qa.get('score', '—')}")
+        if qa.get("issues"):
+            for issue in qa["issues"][:6]:
+                st.caption(f"• {issue}")
+        if qa.get("rewrite_notes"):
+            st.caption(f"Suggested fix: {qa['rewrite_notes']}")
+
+        r1, r2, r3 = st.columns(3)
+        with r1:
+            if st.button("Accept", type="primary", use_container_width=True):
+                result["accepted"] = True
+                if run_dir:
+                    save_output_record(run_dir, result)
+                st.session_state.create_result = result
+                st.success("Accepted.")
+        with r2:
+            if st.button("Regenerate", use_container_width=True):
+                # Pre-fill direction with QA notes and clear result so Generate runs again
+                note = (qa.get("rewrite_notes") or "").strip()
+                if note:
+                    st.session_state.create_direction = note
+                st.session_state.create_result = None
+                st.session_state.create_output = "Video clip" if result.get("type") == "video" else "Still panels"
+                st.session_state.create_source = "Selected panels"
+                st.rerun()
+        with r3:
+            if st.button("Edit direction", use_container_width=True):
+                st.session_state.create_result = None
+                st.rerun()
+
+    if st.button("Generate", type="primary", use_container_width=True, disabled=bool(job_meta)):
+        st.session_state.create_error = None
+        st.session_state.create_result = None
+        if not run_dir:
+            st.session_state.create_error = "Missing run dir"
+            st.rerun()
+
+        # ---- Still panels ----
+        if output == "Still panels":
+            if source == "Selected panels":
+                if len(selected_idxs) != 1:
+                    st.session_state.create_error = "Select exactly one panel to regenerate as a still."
+                    st.rerun()
+                panel = next((p for p in panels if int(p.get("index", -1)) == selected_idxs[0]), None)
+                if not panel:
+                    st.session_state.create_error = "Selected panel not found."
+                    st.rerun()
+                with st.spinner(f"Regenerating panel {selected_idxs[0]}…"):
+                    try:
+                        updated = regenerate_one(
+                            router(),
+                            settings,
+                            bible,
+                            panel,
+                            run_dir,
+                            edit_notes=direction,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        st.session_state.create_error = str(e)
+                        st.rerun()
+                new_list = [
+                    updated if old.get("index") == updated.get("index") else old
+                    for old in st.session_state.all_panels
+                ]
+                st.session_state.all_panels = new_list
+                if step == "pilot":
+                    st.session_state.pilot_panels = [x for x in new_list if int(x.get("index", 0)) <= 5]
+                st.session_state.create_result = {
+                    "output_id": f"still_{selected_idxs[0]}",
+                    "type": "still",
+                    "panel_indexes": selected_idxs,
+                    "path": updated.get("path"),
+                    "qa": (updated.get("critique") or {"pass": updated.get("passed"), "score": None, "issues": []}),
+                    "accepted": False,
+                }
+                st.rerun()
             else:
+                # Next story beat or custom note → generate next batch
                 start = max(int(p.get("index", 0)) for p in panels) + 1 if panels else 1
-                with st.spinner("Generating next batch…"):
+                transcript = st.session_state.transcript
+                if source == "Custom note" and direction.strip():
+                    transcript = f"{transcript}\n\nDIRECTOR NOTE FOR NEXT PANELS: {direction.strip()}"
+                count = int(settings.get("pilot", {}).get("batch_size", 5))
+                with st.spinner(f"Generating {count} still panels…"):
                     try:
                         batch = generate_batch(
                             router(),
                             settings,
                             bible,
-                            st.session_state.transcript,
+                            transcript,
                             run_dir,
                             start_index=start,
-                            count=int(settings.get("pilot", {}).get("batch_size", 5)),
+                            count=count,
                         )
                     except Exception as e:  # noqa: BLE001
-                        st.error(str(e))
-                        st.stop()
+                        st.session_state.create_error = str(e)
+                        st.rerun()
                 st.session_state.all_panels = panels + batch["panels"]
                 st.session_state.sequence = batch.get("sequence")
+                st.session_state.create_result = {
+                    "output_id": f"batch_{start}",
+                    "type": "still_batch",
+                    "panel_indexes": [p.get("index") for p in batch["panels"]],
+                    "qa": {"pass": True, "score": 1.0, "issues": [], "rewrite_notes": ""},
+                    "accepted": False,
+                }
                 st.rerun()
-    with c:
+
+        # ---- Video clip ----
+        else:
+            if source != "Selected panels" or not selected_idxs:
+                st.session_state.create_error = "Select one or more panels to animate."
+                st.rerun()
+            src_panels = [p for p in panels if int(p.get("index", -1)) in set(selected_idxs)]
+            panel_paths = [Path(p["path"]) for p in src_panels if p.get("path") and Path(p["path"]).exists()]
+            if not panel_paths:
+                st.session_state.create_error = "Selected panels have no image files on disk."
+                st.rerun()
+            try:
+                meta = submit_selected_clip(
+                    settings,
+                    bible,
+                    src_panels,
+                    panel_paths,
+                    direction=direction,
+                    motion_style=motion,
+                    duration=int(duration),
+                    aspect_ratio=aspect,
+                )
+                st.session_state.create_job_meta = meta
+            except VideoGenError as e:
+                st.session_state.create_error = str(e)
+            except Exception as e:  # noqa: BLE001
+                st.session_state.create_error = f"Video submit failed: {e}"
+            st.rerun()
+
+    st.divider()
+    nav1, nav2, nav3 = st.columns(3)
+    with nav1:
+        if step == "pilot" and st.button("Looks good — continue", use_container_width=True):
+            st.session_state.step = "continue"
+            st.rerun()
+    with nav2:
         if run_dir and panels and st.button("Export ZIP", use_container_width=True):
             zpath = export_zip(run_dir, panels)
             st.download_button(
@@ -672,8 +833,8 @@ elif step in {"pilot", "continue"}:
                 mime="application/zip",
                 use_container_width=True,
             )
-
-    if st.button("Start over"):
-        for k, v in DEFAULTS.items():
-            st.session_state[k] = v
-        st.rerun()
+    with nav3:
+        if st.button("Start over", use_container_width=True):
+            for k, v in DEFAULTS.items():
+                st.session_state[k] = v
+            st.rerun()
