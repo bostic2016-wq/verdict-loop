@@ -145,7 +145,7 @@ with st.sidebar:
         os.environ.pop("MANGA_MOCK_IMAGES", None)
         os.environ.pop("MANGA_FORCE_MOCK", None)
         settings.setdefault("models", {})["image_backend"] = "openrouter"
-        st.caption("Image backend: Nano Banana Pro → GPT Image (character refs on)")
+        st.caption("Image backend: Nano Banana Pro → FLUX (character refs on)")
 
     try:
         from pipeline.generate import IMAGE_PIPELINE_BUILD
@@ -383,6 +383,12 @@ elif step == "brief":
                 events.append(event)
                 if event == "panels_planned":
                     progress.progress(0.1, text="Panels planned — generating…")
+                elif event == "panel_start":
+                    idx = payload.get("index", 0)
+                    progress.progress(
+                        min(0.1 + 0.15 * max(int(idx) - 1, 0), 0.9),
+                        text=f"Generating panel {idx}…",
+                    )
                 elif event == "panel_done":
                     idx = payload.get("index", 0)
                     progress.progress(min(0.1 + 0.15 * int(idx), 0.9), text=f"Panel {idx} done")

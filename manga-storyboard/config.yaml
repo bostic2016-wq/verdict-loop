@@ -3,11 +3,10 @@ models:
   vision_critic: openrouter/google/gemini-2.5-flash
   # openrouter = Images API via OpenRouter (uses OPENROUTER_API_KEY)
   image_backend: openrouter
-  # Tried in order — Nano Banana Pro first (best multi-reference character
-  # fidelity), GPT Image 2 second, FLUX as the cheap tail.
+  # Nano Banana Pro first; FLUX as fast reliable fallback.
+  # GPT Image removed — openai/gpt-image-2 hung >45s and froze panel batches.
   image_model_chain:
     - google/gemini-3-pro-image
-    - openai/gpt-image-2
     - black-forest-labs/flux.2-pro
 
 openrouter:

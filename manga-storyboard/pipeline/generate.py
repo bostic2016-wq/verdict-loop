@@ -1,9 +1,12 @@
-"""Image generation backends — OpenRouter Nano Banana Pro / GPT Image with character references."""
+"""Image generation backends — OpenRouter Nano Banana Pro / FLUX with character references."""
 
 from __future__ import annotations
 
 import base64
+import io
 import os
+import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -11,15 +14,21 @@ from urllib.parse import quote
 import httpx
 
 
-IMAGE_PIPELINE_BUILD = "2026-07-16-nano-banana-refs-v4"
+IMAGE_PIPELINE_BUILD = "2026-07-16-nohang-v5"
 
-# Tried in order until one succeeds. Nano Banana Pro handles multi-reference
-# character fidelity best; GPT Image 2 is the strong second; FLUX is the cheap tail.
+# Nano Banana Pro first (best multi-reference character fidelity).
+# FLUX is the reliable fallback. GPT Image is omitted — openai/gpt-image-2
+# hung past 45s in production probes and made panel 5 look "stuck".
 DEFAULT_MODEL_CHAIN = [
     "google/gemini-3-pro-image",
-    "openai/gpt-image-2",
     "black-forest-labs/flux.2-pro",
 ]
+
+# Per-model read timeout. Keep this short so a bad model cannot freeze a batch.
+MODEL_TIMEOUT_S = 75.0
+CONNECT_TIMEOUT_S = 10.0
+REF_MAX_SIDE = 768
+REF_JPEG_QUALITY = 80
 
 
 class ImageGenError(RuntimeError):
@@ -50,11 +59,11 @@ def generate_panel_image(
     if backend == "pollinations":
         return _pollinations(full_prompt, out_path, width, height, seed)
 
-    # Default: OpenRouter model chain with reference images
     last_err: Exception | None = None
     for model in _model_chain(settings):
         try:
-            return _openrouter_images_api(
+            print(f"[manga-gen] trying {model} → {out_path.name}", file=sys.stderr, flush=True)
+            path = _openrouter_images_api(
                 settings,
                 model,
                 full_prompt,
@@ -62,10 +71,13 @@ def generate_panel_image(
                 seed=seed,
                 reference_paths=reference_paths,
             )
+            print(f"[manga-gen] ok {model} → {out_path.name}", file=sys.stderr, flush=True)
+            return path
         except Exception as exc:  # noqa: BLE001 — try next model
             last_err = exc
-    # Everything paid failed → free fallback so the run still completes
+            print(f"[manga-gen] fail {model}: {exc}", file=sys.stderr, flush=True)
     try:
+        print("[manga-gen] falling back to pollinations", file=sys.stderr, flush=True)
         return _pollinations(full_prompt, out_path, width, height, seed)
     except Exception as exc:  # noqa: BLE001
         raise ImageGenError(f"All image backends failed: {last_err}; pollinations: {exc}") from exc
@@ -75,7 +87,8 @@ def _model_chain(settings: dict[str, Any]) -> list[str]:
     models_cfg = settings.get("models") or {}
     chain = models_cfg.get("image_model_chain")
     if isinstance(chain, list) and chain:
-        return [str(m) for m in chain]
+        # Drop known-hanging GPT Image 2 unless user explicitly only wants it
+        return [str(m) for m in chain if str(m) != "openai/gpt-image-2" or len(chain) == 1]
     primary = models_cfg.get("image_model")
     out = [primary] if primary else []
     for m in DEFAULT_MODEL_CHAIN:
@@ -96,15 +109,30 @@ def _resolve_backend(settings: dict[str, Any]) -> str:
 
 
 def _image_data_url(path: Path) -> str:
-    suffix = path.suffix.lower()
-    mime = {
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-    }.get(suffix, "image/jpeg")
-    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime};base64,{b64}"
+    """Encode a reference image as a compressed JPEG data URL (avoids huge payloads)."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            w, h = img.size
+            scale = min(1.0, REF_MAX_SIDE / max(w, h))
+            if scale < 1.0:
+                img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=REF_JPEG_QUALITY, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{b64}"
+    except Exception:  # noqa: BLE001 — fall back to raw bytes
+        suffix = path.suffix.lower()
+        mime = {
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+        }.get(suffix, "image/jpeg")
+        b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{b64}"
 
 
 def _openrouter_images_api(
@@ -142,11 +170,14 @@ def _openrouter_images_api(
         "HTTP-Referer": "https://github.com/bostic2016-wq/verdict-loop",
         "X-Title": "Manga Storyboard",
     }
-    with httpx.Client(timeout=240.0) as client:
+    t0 = time.time()
+    timeout = httpx.Timeout(MODEL_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
+    with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             raise ImageGenError(f"OpenRouter {model} error {resp.status_code}: {resp.text[:400]}")
         data = resp.json()
+    print(f"[manga-gen] {model} responded in {time.time() - t0:.1f}s", file=sys.stderr, flush=True)
 
     images = data.get("data") or []
     if images and images[0].get("b64_json"):
@@ -154,7 +185,7 @@ def _openrouter_images_api(
         out_path.write_bytes(base64.b64decode(images[0]["b64_json"]))
         return out_path
     if images and images[0].get("url"):
-        with httpx.Client(timeout=120.0) as client:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=CONNECT_TIMEOUT_S)) as client:
             img = client.get(images[0]["url"])
             img.raise_for_status()
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -216,7 +247,7 @@ def _pollinations(
     key = os.getenv("POLLINATIONS_API_KEY")
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    with httpx.Client(timeout=180.0, follow_redirects=True) as client:
+    with httpx.Client(timeout=httpx.Timeout(90.0, connect=CONNECT_TIMEOUT_S), follow_redirects=True) as client:
         resp = client.get(url, headers=headers)
         if resp.status_code >= 400:
             raise ImageGenError(f"Pollinations error {resp.status_code}: {resp.text[:300]}")
