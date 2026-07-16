@@ -127,6 +127,13 @@ with st.sidebar:
         settings.setdefault("models", {})["image_backend"] = "openrouter"
         st.caption("Image backend: OpenRouter FLUX (real panels)")
 
+    try:
+        from pipeline.generate import IMAGE_PIPELINE_BUILD
+
+        st.caption(f"Build: {IMAGE_PIPELINE_BUILD}")
+    except Exception:
+        st.caption("Build: (old — reboot the app)")
+
 
 # ---------- Header ----------
 st.title("Manga Storyboard")

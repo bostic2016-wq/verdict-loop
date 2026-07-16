@@ -38,17 +38,24 @@ def generate_panel_image(
         return _mock_image(out_path, full_prompt, width, height)
     if backend == "fal_illustrious":
         return _fal_generate(prompt, negative_prompt, out_path, width, height, seed)
-    if backend == "openrouter":
+    if backend in {"openrouter", "openrouter_flux", "flux"}:
         try:
             return _openrouter_images_api(settings, full_prompt, out_path, seed=seed)
         except Exception:
-            # Free fallback so cloud runs still get real pictures
             return _pollinations(full_prompt, out_path, width, height, seed)
     if backend == "openrouter_gpt_image":
         return _openrouter_chat_image(settings, full_prompt, out_path)
     if backend == "pollinations":
         return _pollinations(full_prompt, out_path, width, height, seed)
-    raise ImageGenError(f"Unknown image_backend: {backend}")
+
+    # Unknown / stale config → still try real images (never hard-fail on backend name)
+    try:
+        return _openrouter_images_api(settings, full_prompt, out_path, seed=seed)
+    except Exception:
+        return _pollinations(full_prompt, out_path, width, height, seed)
+
+
+IMAGE_PIPELINE_BUILD = "2026-07-16-openrouter-v2"
 
 
 def _resolve_backend(settings: dict[str, Any]) -> str:
