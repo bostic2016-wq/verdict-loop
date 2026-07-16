@@ -56,6 +56,17 @@ def _is_retryable(exc: Exception) -> bool:
     )
 
 
+def _retry_sleep_seconds(exc: Exception, attempt: int) -> float:
+    """Backoff for free-tier throttles (Groq/Gemini 429s)."""
+    msg = str(exc)
+    # "Please retry in 7.5s" style hints from providers
+    match = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)\s*s", msg, re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)) + 1.0, 3.0)
+    # Free tiers often need a longer cool-down than 2–4s
+    return float(12 * (attempt + 1))
+
+
 class ModelRouter:
     """Thin multi-model router (free providers now; OpenRouter later via config)."""
 
@@ -63,6 +74,7 @@ class ModelRouter:
         self.settings = settings
         self.models: dict[str, str] = settings.get("models", {})
         self.fallbacks: dict[str, str] = settings.get("fallback_models", {})
+        self._last_call_at = 0.0
         # LiteLLM reads GROQ_API_KEY / GEMINI_API_KEY / OPENROUTER_API_KEY from environment.
 
     def model_for(self, role: str) -> str:
@@ -70,7 +82,17 @@ class ModelRouter:
             raise KeyError(f"No model configured for role: {role}")
         return self.models[role]
 
+    def _pace(self) -> None:
+        """Small gap between calls so free tiers don't see a burst."""
+        gap = 1.25
+        now = time.time()
+        wait = gap - (now - self._last_call_at)
+        if wait > 0:
+            time.sleep(wait)
+        self._last_call_at = time.time()
+
     def _call(self, kwargs: dict[str, Any], *, json_mode: bool) -> str:
+        self._pace()
         local = dict(kwargs)
         try:
             if json_mode:
@@ -114,13 +136,13 @@ class ModelRouter:
                 "temperature": temperature,
                 "max_tokens": max_tokens or (2048 if json_mode else 1024),
             }
-            for attempt in range(3):
+            for attempt in range(4):
                 try:
                     return self._call(kwargs, json_mode=json_mode)
                 except Exception as exc:
                     last_exc = exc
-                    if _is_retryable(exc) and attempt < 2:
-                        time.sleep(2 * (attempt + 1))
+                    if _is_retryable(exc) and attempt < 3:
+                        time.sleep(_retry_sleep_seconds(exc, attempt))
                         continue
                     break  # try fallback model
         assert last_exc is not None

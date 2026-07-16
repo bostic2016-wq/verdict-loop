@@ -1,34 +1,34 @@
 debate:
-  max_rounds: 3
+  # Keep rounds low on free tiers to avoid bursting rate limits
+  max_rounds: 2
   pass_score: 8
 
 creative:
   enabled: true
-  max_image_rounds: 3
+  max_image_rounds: 2
   pass_score: 7
   image_count: 2
   width: 1024
   height: 1024
-  # still generate creatives even if verdict is "don't"
   generate_on_reject: true
 
 models:
-  # Prefer 8B on Groq free tier (much higher daily request room than 70B)
+  # Split providers so one free tier isn't hit 3x in the same round
   scout: groq/llama-3.1-8b-instant
   advocate: gemini/gemini-flash-latest
   skeptic: groq/llama-3.1-8b-instant
-  judge: groq/llama-3.1-8b-instant
+  judge: gemini/gemini-flash-latest
   promoter: gemini/gemini-flash-latest
   image_critic: gemini/gemini-flash-latest
   image_model: flux
 
-# Text-role fallbacks only (image_critic needs vision — do not fall back to Groq text)
+# Cross-provider fallbacks when the primary is rate-limited / busy
 fallback_models:
+  scout: gemini/gemini-flash-latest
   advocate: groq/llama-3.1-8b-instant
-  promoter: groq/llama-3.1-8b-instant
-  scout: groq/llama-3.1-8b-instant
+  skeptic: gemini/gemini-flash-latest
   judge: groq/llama-3.1-8b-instant
-  skeptic: groq/llama-3.1-8b-instant
+  promoter: groq/llama-3.1-8b-instant
 
 pollinations:
   base_url: https://image.pollinations.ai/prompt
