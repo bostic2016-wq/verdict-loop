@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Verdict Loop</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <p class="brand">Verdict Loop</p>
+      <h1>Stress-test a plan. Then generate creatives.</h1>
+      <p class="lede">
+        Scout researches. Advocate and Skeptic argue. Judge decides.
+        Then Promoter writes the pitch, an image model draws, and a vision critic QA-checks.
+      </p>
+    </header>
+
+    <form class="form" method="post" action="/run">
+      <label for="claim">Your plan or claim</label>
+      <textarea id="claim" name="claim" rows="6" placeholder="e.g. Should I launch a weekend newsletter about city walks for local businesses?" required></textarea>
+      <label class="check">
+        <input type="checkbox" name="with_images" checked />
+        Run promo + image loop after the verdict
+      </label>
+      <button type="submit">Run red team</button>
+      <p class="hint">Free stack: Groq + Gemini + Pollinations. First run can take a few minutes.</p>
+    </form>
+
+    {% if error %}
+    <section class="card error">
+      <h2>Something went wrong</h2>
+      <pre>{{ error }}</pre>
+    </section>
+    {% endif %}
+
+    {% if result %}
+    <section class="card">
+      <h2>Verdict</h2>
+      {% set v = result.debate.verdict %}
+      <p class="badge">{{ v.recommendation }} · score {{ v.score }}</p>
+      <p>{{ v.reasoning }}</p>
+      {% if v.conditions %}
+      <ul>
+        {% for c in v.conditions %}
+        <li>{{ c }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <p class="muted">Full report: <code>{{ result.run_dir }}/report.md</code></p>
+    </section>
+
+    <section class="card">
+      <h2>Debate transcript</h2>
+      {% for rnd in result.debate.rounds %}
+      <article class="round">
+        <h3>Round {{ rnd.round }}</h3>
+        <p class="muted">Judge score {{ rnd.judgment.score }} · continue={{ rnd.judgment.continue }}</p>
+        <h4>Advocate</h4>
+        <pre class="prose">{{ rnd.advocate }}</pre>
+        <h4>Skeptic</h4>
+        <pre class="prose">{{ rnd.skeptic }}</pre>
+      </article>
+      {% endfor %}
+    </section>
+
+    {% if result.creative %}
+    <section class="card">
+      <h2>Promo pack</h2>
+      <p><strong>{{ result.creative.promo.headline }}</strong></p>
+      <p class="muted">{{ result.creative.promo.tagline }}</p>
+      <p>{{ result.creative.promo.promo_blurb }}</p>
+      <div class="gallery">
+        {% for asset in result.creative.approved %}
+        <figure>
+          <img src="{{ result._web_base }}/{{ asset.path }}" alt="{{ asset.purpose }}" />
+          <figcaption>
+            {{ asset.purpose }} · score {{ asset.critique.score }}
+            {% if asset.critique.issues %}
+            <br />{{ asset.critique.issues | join('; ') }}
+            {% endif %}
+          </figcaption>
+        </figure>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+    {% endif %}
+  </main>
+</body>
+</html>

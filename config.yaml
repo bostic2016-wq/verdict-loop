@@ -1,0 +1,35 @@
+debate:
+  max_rounds: 3
+  pass_score: 8
+
+creative:
+  enabled: true
+  max_image_rounds: 3
+  pass_score: 7
+  image_count: 2
+  width: 1024
+  height: 1024
+  # still generate creatives even if verdict is "don't"
+  generate_on_reject: true
+
+models:
+  scout: groq/llama-3.3-70b-versatile
+  advocate: gemini/gemini-flash-latest
+  skeptic: groq/llama-3.1-8b-instant
+  # Groq for reliable JSON scoring; Gemini handles argument + creatives
+  judge: groq/llama-3.3-70b-versatile
+  promoter: gemini/gemini-flash-latest
+  image_critic: gemini/gemini-flash-latest
+  image_model: flux
+
+# If Gemini is busy/rate-limited, fall back to Groq so the loop still finishes
+fallback_models:
+  advocate: groq/llama-3.3-70b-versatile
+  promoter: groq/llama-3.3-70b-versatile
+  image_critic: groq/llama-3.3-70b-versatile
+
+pollinations:
+  base_url: https://image.pollinations.ai/prompt
+
+paths:
+  outputs_dir: outputs/runs
