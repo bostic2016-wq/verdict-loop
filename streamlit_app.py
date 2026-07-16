@@ -36,7 +36,7 @@ from harness.pipeline import run_compare, run_pipeline  # noqa: E402
 from harness.templates import claim_for_label, template_labels  # noqa: E402
 
 st.set_page_config(
-    page_title="Verdict Loop v2",
+    page_title="Verdict Loop v3.1",
     page_icon="◆",
     layout="wide",
     initial_sidebar_state="collapsed",
