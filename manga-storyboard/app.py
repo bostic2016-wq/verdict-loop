@@ -109,16 +109,23 @@ with st.sidebar:
         st.info("No drawings yet. Optional but helps character consistency.")
 
     st.divider()
+    import os
+
     mock = st.checkbox(
         "Mock images (no API spend)",
-        value=settings.get("models", {}).get("image_backend") == "mock",
-        help="Generates placeholder panels so you can test the workflow without Fal/OpenRouter image credits.",
+        value=False,
+        help="OFF = real FLUX images via OpenRouter. ON = black placeholder panels only.",
     )
     if mock:
         settings.setdefault("models", {})["image_backend"] = "mock"
-        import os
-
         os.environ["MANGA_MOCK_IMAGES"] = "1"
+        os.environ["MANGA_FORCE_MOCK"] = "1"
+        st.caption("⚠️ Mock mode — panels will be placeholders, not art.")
+    else:
+        os.environ.pop("MANGA_MOCK_IMAGES", None)
+        os.environ.pop("MANGA_FORCE_MOCK", None)
+        settings.setdefault("models", {})["image_backend"] = "openrouter"
+        st.caption("Image backend: OpenRouter FLUX (real panels)")
 
 
 # ---------- Header ----------
