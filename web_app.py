@@ -25,8 +25,9 @@ app.mount("/static", StaticFiles(directory=str(ROOT / "web" / "static")), name="
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse(
+        request,
         "index.html",
-        {"request": request, "error": None, "result": None},
+        {"error": None, "result": None},
     )
 
 
@@ -39,16 +40,18 @@ async def run(
     claim = claim.strip()
     if not claim:
         return templates.TemplateResponse(
+            request,
             "index.html",
-            {"request": request, "error": "Paste a plan or claim first.", "result": None},
+            {"error": "Paste a plan or claim first.", "result": None},
             status_code=400,
         )
     try:
         result = run_pipeline(claim, with_images=with_images == "on")
     except Exception as exc:
         return templates.TemplateResponse(
+            request,
             "index.html",
-            {"request": request, "error": str(exc), "result": None},
+            {"error": str(exc), "result": None},
             status_code=500,
         )
 
@@ -57,8 +60,9 @@ async def run(
     rel = run_path.relative_to(ROOT / "outputs")
     result["_web_base"] = f"/outputs/{rel.as_posix()}"
     return templates.TemplateResponse(
+        request,
         "index.html",
-        {"request": request, "error": None, "result": result},
+        {"error": None, "result": result},
     )
 
 

@@ -3,23 +3,49 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Verdict Loop</title>
+  <title>Verdict Loop v2</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <main class="wrap">
     <header class="hero">
-      <p class="brand">Verdict Loop</p>
-      <h1>Stress-test a plan.<br />Then generate creatives.</h1>
+      <div class="brand-row">
+        <p class="brand">Verdict Loop</p>
+        <span class="chip">v2 · OpenRouter</span>
+      </div>
+      <h1>Stress-test a plan.<br /><em>Then ship creatives.</em></h1>
       <p class="lede">
-        A multi-model red team for decisions — research, argue both sides,
-        judge the case, then optionally ship promo copy and images.
+        A multi-model red team — research, argue both sides, judge the case,
+        then optionally generate promo copy and images through OpenRouter.
       </p>
       <div class="steps">
         <div class="step"><strong>1 · Scout</strong>Maps risks &amp; unknowns</div>
         <div class="step"><strong>2 · Debate</strong>Advocate vs Skeptic</div>
         <div class="step"><strong>3 · Judge</strong>Do / don’t / only if</div>
         <div class="step"><strong>4 · Creative</strong>Copy + image QA loop</div>
+      </div>
+      <div class="models">
+        <p class="models-label">Model roster · OpenRouter edition</p>
+        <div class="model">
+          <img src="/static/logos/openai.svg" alt="OpenAI" />
+          <span><span class="model-name">OpenAI</span><span class="model-role">Scout + Skeptic · GPT-5 mini</span></span>
+        </div>
+        <div class="model">
+          <img src="/static/logos/xai.svg" alt="xAI" />
+          <span><span class="model-name">xAI</span><span class="model-role">Advocate · Grok 4.20</span></span>
+        </div>
+        <div class="model">
+          <img src="/static/logos/anthropic.svg" alt="Anthropic" />
+          <span><span class="model-name">Anthropic</span><span class="model-role">Judge · Claude Sonnet 5</span></span>
+        </div>
+        <div class="model">
+          <img src="/static/logos/google.svg" alt="Google Gemini" />
+          <span><span class="model-name">Google</span><span class="model-role">Promo + Critic · Gemini 2.5 Flash</span></span>
+        </div>
+        <div class="model">
+          <img src="/static/logos/bfl.svg" alt="Black Forest Labs FLUX" />
+          <span><span class="model-name">Black Forest Labs</span><span class="model-role">Images · FLUX.2 Pro</span></span>
+        </div>
       </div>
     </header>
 
@@ -30,8 +56,8 @@
         <input type="checkbox" name="with_images" value="on" checked />
         Also run promo + image loop
       </label>
-      <button type="submit">Run red team</button>
-      <p class="hint">Free-tier APIs (Groq + Gemini + Pollinations). Rate limits apply. First run can take a few minutes.</p>
+      <button type="submit">Run Verdict Loop v2</button>
+      <p class="hint">v2 runs on OpenRouter (GPT-5 mini, Grok, Claude, Gemini, FLUX). First run can take a few minutes.</p>
     </form>
 
     {% if error %}

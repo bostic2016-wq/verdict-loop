@@ -9,6 +9,9 @@ from typing import Any
 
 import litellm
 
+# Hide litellm's red "Provider List" banners on soft-retried calls
+litellm.suppress_debug_info = True
+
 
 class ProviderError(RuntimeError):
     """User-facing provider failure (rate limits, auth, network)."""
@@ -34,7 +37,7 @@ def _friendly_provider_error(exc: Exception, role: str, model: str) -> ProviderE
     if any(x in msg for x in ("401", "403", "invalid api key", "authentication", "unauthorized")):
         return ProviderError(
             f"Auth failed for role '{role}' ({model}). "
-            "Check GROQ_API_KEY / GEMINI_API_KEY in .env."
+            "Check OPENROUTER_API_KEY (or GROQ_API_KEY / GEMINI_API_KEY fallbacks) in .env."
         )
     return ProviderError(f"Provider error for role '{role}' ({model}): {detail}")
 
@@ -52,6 +55,9 @@ def _is_retryable(exc: Exception) -> bool:
             "overloaded",
             "timeout",
             "temporarily",
+            "402",
+            "insufficient credits",
+            "payment required",
         )
     )
 
@@ -67,7 +73,7 @@ def _retry_sleep_seconds(exc: Exception, attempt: int) -> float:
 
 
 class ModelRouter:
-    """Thin multi-model router (free providers now; OpenRouter later via config)."""
+    """Thin multi-model router: OpenRouter primary, free Groq/Gemini fallbacks."""
 
     def __init__(self, settings: dict[str, Any]):
         self.settings = settings
@@ -135,12 +141,16 @@ class ModelRouter:
                 "temperature": temperature,
                 "max_tokens": max_tokens or (2048 if json_mode else 1024),
             }
-            # 2 quick tries, then switch provider — avoids 5-minute UI freezes
+            # 1 quick retry on soft failures, then switch provider (incl. OpenRouter 402 → free tier)
             for attempt in range(2):
                 try:
                     return self._call(kwargs, json_mode=json_mode)
                 except Exception as exc:
                     last_exc = exc
+                    msg = str(exc).lower()
+                    # Don't burn time retrying zero-credit OpenRouter — fall over immediately
+                    if any(x in msg for x in ("402", "insufficient credits", "payment required")):
+                        break
                     if _is_retryable(exc) and attempt < 1:
                         time.sleep(_retry_sleep_seconds(exc, attempt))
                         continue
@@ -158,7 +168,6 @@ class ModelRouter:
         json_mode: bool = True,
         temperature: float = 0.2,
     ) -> str:
-        model = self.model_for(role)
         mime = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
         b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
         data_url = f"data:{mime};base64,{b64}"
@@ -172,24 +181,35 @@ class ModelRouter:
                 ],
             },
         ]
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": 1024,
-        }
+
+        models_to_try = [self.model_for(role)]
+        fallback = self.fallbacks.get(role)
+        if fallback and fallback not in models_to_try:
+            models_to_try.append(fallback)
+
         last_exc: Exception | None = None
-        for attempt in range(3):
-            try:
-                return self._call(kwargs, json_mode=json_mode)
-            except Exception as exc:
-                last_exc = exc
-                if _is_retryable(exc) and attempt < 2:
-                    time.sleep(2 * (attempt + 1))
-                    continue
-                break
+        for model in models_to_try:
+            kwargs: dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": 1024,
+            }
+            for attempt in range(2):
+                try:
+                    return self._call(kwargs, json_mode=json_mode)
+                except Exception as exc:
+                    last_exc = exc
+                    msg = str(exc).lower()
+                    # Zero-credit OpenRouter: skip retries, jump to fallback model
+                    if any(x in msg for x in ("402", "insufficient credits", "payment required")):
+                        break
+                    if _is_retryable(exc) and attempt < 1:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    break
         assert last_exc is not None
-        raise _friendly_provider_error(last_exc, role, model) from last_exc
+        raise _friendly_provider_error(last_exc, role, models_to_try[-1]) from last_exc
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)

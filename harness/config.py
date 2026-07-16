@@ -23,18 +23,25 @@ def load_settings(config_path: Path | None = None) -> dict[str, Any]:
         "OPENROUTER_API_KEY": os.getenv("OPENROUTER_API_KEY", ""),
         "OLLAMA_BASE_URL": os.getenv("OLLAMA_BASE_URL", ""),
     }
+    # LiteLLM reads this env var for openrouter/* models
+    if data["_env"]["OPENROUTER_API_KEY"]:
+        os.environ["OPENROUTER_API_KEY"] = data["_env"]["OPENROUTER_API_KEY"]
     return data
 
 
 def require_text_keys(settings: dict[str, Any]) -> None:
+    env = settings["_env"]
+    if env.get("OPENROUTER_API_KEY"):
+        return
     missing = []
-    if not settings["_env"]["GROQ_API_KEY"]:
+    if not env.get("GROQ_API_KEY"):
         missing.append("GROQ_API_KEY")
-    if not settings["_env"]["GEMINI_API_KEY"]:
+    if not env.get("GEMINI_API_KEY"):
         missing.append("GEMINI_API_KEY")
     if missing:
         raise RuntimeError(
-            "Missing free API keys: "
+            "Missing API keys: "
             + ", ".join(missing)
-            + ". Copy .env.example to .env and fill them in."
+            + " (or set OPENROUTER_API_KEY). "
+            "Copy .env.example to .env and fill them in."
         )
