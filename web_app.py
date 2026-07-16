@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from harness.config import ROOT, load_settings
-from harness.followup import answer_followup, append_followup
+from harness.followup import answer_followup, append_followup, suggested_followups
 from harness.pipeline import run_compare, run_pipeline
 from harness.router import ModelRouter
 from harness.templates import TEMPLATES
@@ -28,14 +28,18 @@ _LAST: dict = {"result": None, "messages": []}
 
 
 def _ctx(**extra):
+    result = extra.get("result", _LAST.get("result"))
     base = {
         "error": None,
-        "result": _LAST.get("result"),
+        "result": result,
         "messages": _LAST.get("messages") or [],
         "templates": TEMPLATES,
+        "suggestions": suggested_followups(result) if result else [],
         "pick": None,
     }
     base.update(extra)
+    if "result" in extra:
+        base["suggestions"] = suggested_followups(extra["result"]) if extra["result"] else []
     return base
 
 

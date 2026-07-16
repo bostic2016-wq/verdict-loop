@@ -11,6 +11,7 @@ from harness.creative_loop import run_creative
 from harness.images import ImageClient
 from harness.loop import run_debate
 from harness.mock_router import MockRouter
+from harness.money import attach_money_context
 from harness.research import merge_user_context
 from harness.router import ModelRouter
 
@@ -51,11 +52,13 @@ def run_pipeline(
         MockRouter(settings) if dry_run else ModelRouter(settings)
     )
     claim = merge_user_context(claim, extra_context)
+    claim, money_facts = attach_money_context(claim)
     partial: dict[str, Any] = {
         "run_dir": str(run_dir),
         "claim": claim,
         "detail": detail,
         "mode": "single",
+        "money_facts": money_facts if money_facts.get("has_money_signal") else None,
         "debate": None,
         "creative": None,
         "created_at": datetime.now(timezone.utc).isoformat(),

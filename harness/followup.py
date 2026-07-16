@@ -10,8 +10,9 @@ from harness.router import ModelRouter
 
 
 FOLLOWUP_SYSTEM = """You are Verdict Loop's follow-up assistant.
-Answer the user's question using ONLY the provided run context (claim, verdict, conditions, research notes, debate summaries).
+Answer the user's question using ONLY the provided run context (claim, verdict, conditions, research notes, debate summaries, and any VERIFIED MONEY MATH).
 If the answer is not in the context, say what is missing — do not invent facts.
+For money questions: use VERIFIED MONEY MATH numbers exactly; never invent a different after-tax figure.
 Keep answers short and clear unless the user asks for detail.
 If the context includes two compared plans (A and B), say which plan you are referring to.
 """
@@ -31,6 +32,11 @@ def build_run_context(result: dict[str, Any], *, detail: str = "brief") -> str:
         f"BOTTOM LINE: {verdict.get('bottom_line') or verdict.get('reasoning') or ''}",
         "CONDITIONS:\n- " + "\n- ".join(verdict.get("conditions") or ["(none)"]),
     ]
+    money = result.get("money_facts")
+    if money and money.get("has_money_signal"):
+        from harness.money import format_money_block
+
+        parts.append(format_money_block(money))
     if notes:
         parts.append(f"RESEARCH SUMMARY:\n{notes.get('summary', '')}")
         if detail == "detailed":
@@ -131,6 +137,49 @@ def pick_between_plans(
         temperature=0.2,
         max_tokens=300,
     )
+
+
+def suggested_followups(result: dict[str, Any]) -> list[str]:
+    """Dropdown suggestions after a run."""
+    suggestions: list[str] = []
+    if result.get("mode") == "compare":
+        suggestions.extend(
+            [
+                "Why is Plan A stronger?",
+                "Why is Plan B stronger?",
+                "What is the biggest risk for each plan?",
+                "What should I do this week to decide?",
+            ]
+        )
+        return suggestions
+
+    verdict = ((result.get("debate") or {}).get("verdict") or {})
+    for q in verdict.get("focus_questions") or []:
+        q = str(q).strip()
+        if q and q not in suggestions:
+            suggestions.append(q)
+    money = result.get("money_facts") or {}
+    if money.get("has_money_signal"):
+        suggestions.extend(
+            [
+                "Walk me through the after-tax math again.",
+                "What tax info do you still need from me?",
+                "What would my monthly take-home be under the mid estimate?",
+            ]
+        )
+    suggestions.extend(
+        [
+            "What should I do this week?",
+            "What is the biggest risk I am underestimating?",
+            "What would make you change this verdict?",
+        ]
+    )
+    # de-dupe, cap
+    out: list[str] = []
+    for s in suggestions:
+        if s not in out:
+            out.append(s)
+    return out[:8]
 
 
 def append_followup(run_dir: str | Path, question: str, answer: str) -> None:

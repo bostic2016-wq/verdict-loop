@@ -11,9 +11,9 @@
     <header class="hero">
       <div class="brand-row">
         <p class="brand">Verdict Loop</p>
-        <span class="chip">v3 · Brief + Memory</span>
+        <span class="chip">v3.1 · Money + Follow-ups</span>
       </div>
-      <div class="banner"><strong>New</strong> Brief answers · Compare plans · Follow-up chat</div>
+      <div class="banner"><strong>Fix</strong> Verified tax math · Suggested follow-up dropdown</div>
       <h1>Stress-test a plan.<br /><em>Ask follow-ups.</em></h1>
       <p class="lede">
         Brief by default. Compare two plans. Keep chatting about the verdict —
@@ -141,6 +141,27 @@
       {% endif %}
     </section>
 
+    {% if result.money_facts and result.money_facts.has_money_signal %}
+    <section class="card">
+      <h2>Verified money math</h2>
+      {% if result.money_facts.gross is not none %}
+      <p><strong>Gross used:</strong> ${{ '{:,.0f}'.format(result.money_facts.gross) }}/yr</p>
+      {% endif %}
+      {% if result.money_facts.net is not none and result.money_facts.tax_rate is not none %}
+      <p><strong>After-tax:</strong> ${{ '{:,.0f}'.format(result.money_facts.net) }}/yr
+        at {{ (result.money_facts.tax_rate * 100)|round(1) }}% effective tax</p>
+      {% endif %}
+      <ul>
+        {% for c in result.money_facts.calculations or [] %}
+        <li>{{ c }}</li>
+        {% endfor %}
+      </ul>
+      {% for m in result.money_facts.missing or [] %}
+      <p class="hint">{{ m }}</p>
+      {% endfor %}
+    </section>
+    {% endif %}
+
     <details class="card" {% if result.detail == 'detailed' %}open{% endif %}>
       <summary style="cursor:pointer;font-weight:700;">Full debate</summary>
       {% for rnd in result.debate.rounds %}
@@ -188,9 +209,16 @@
       <p><strong>{{ m.role }}:</strong> {{ m.content }}</p>
       {% endfor %}
       <form method="post" action="/followup">
-        <label for="question">Question</label>
+        <label for="suggestion">Suggested follow-ups</label>
+        <select id="suggestion" name="suggestion" onchange="if(this.value){document.getElementById('question').value=this.value;}">
+          <option value="">(type your own below)</option>
+          {% for s in suggestions %}
+          <option value="{{ s }}">{{ s }}</option>
+          {% endfor %}
+        </select>
+        <label for="question">Your follow-up question</label>
         <textarea id="question" name="question" rows="2" placeholder="e.g. What should I check first?" required></textarea>
-        <button type="submit">Ask</button>
+        <button type="submit">Ask follow-up</button>
       </form>
     </section>
     {% endif %}

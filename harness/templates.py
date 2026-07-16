@@ -33,6 +33,14 @@ TEMPLATES: list[dict[str, str]] = [
         "label": "Hire help / DIY",
         "claim": "Should I hire help for this work, or keep doing it myself for the next quarter?",
     },
+    {
+        "id": "finance",
+        "label": "Personal finance / take-home",
+        "claim": (
+            "I make $85,000 gross per year. Assuming a 28% effective tax rate, "
+            "should I keep my current job or take a $95,000 offer in the same city?"
+        ),
+    },
 ]
 
 

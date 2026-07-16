@@ -302,7 +302,7 @@ def _gate() -> bool:
     st.markdown(
         '<div class="vl-hero"><div class="vl-brand-row">'
         '<p class="vl-brand">Verdict Loop</p>'
-        '<span class="vl-chip">v3 · Brief + Memory</span></div>'
+        '<span class="vl-chip">v3.1 · Money + Follow-ups</span></div>'
         '<h1 class="vl-title">Enter to continue</h1>'
         "<p class=\"vl-lede\">This public demo is password-protected.</p></div>",
         unsafe_allow_html=True,
@@ -438,6 +438,109 @@ def _keys_ok() -> bool:
     return bool(os.getenv("GROQ_API_KEY") and os.getenv("GEMINI_API_KEY"))
 
 
+def _render_money_facts(result: dict) -> None:
+    money = result.get("money_facts") or {}
+    if not money.get("has_money_signal"):
+        return
+    with st.expander("Verified money math", expanded=True):
+        if money.get("gross") is not None:
+            st.write(f"**Gross used:** ${money['gross']:,.0f}/yr")
+        if money.get("net") is not None and money.get("tax_rate") is not None:
+            st.write(
+                f"**After-tax:** ${money['net']:,.0f}/yr "
+                f"at {money['tax_rate'] * 100:g}% effective tax"
+            )
+        for c in money.get("calculations") or []:
+            st.markdown(f"- {c}")
+        for m in money.get("missing") or []:
+            st.warning(m)
+
+
+def _ask_followup(result: dict, detail_used: str) -> None:
+    from harness.config import load_settings
+    from harness.followup import (
+        answer_followup,
+        append_followup,
+        suggested_followups,
+    )
+    from harness.router import ModelRouter
+
+    st.markdown("---")
+    st.markdown("### Ask a follow-up")
+    st.caption(
+        "Pick a suggested question or type your own. "
+        "Memory lasts for this browser session."
+    )
+
+    for msg in st.session_state.get("followup_messages") or []:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    suggestions = suggested_followups(result)
+    options = ["(type your own below)"] + suggestions
+    picked = st.selectbox(
+        "Suggested follow-ups",
+        options,
+        index=0,
+        key="followup_select",
+    )
+    custom = st.text_input(
+        "Your follow-up question",
+        placeholder="e.g. Recalculate my after-tax take-home…",
+        key="followup_text",
+    )
+
+    c1, c2, c3 = st.columns([2, 2, 1])
+    with c1:
+        ask = st.button("Ask follow-up", type="primary")
+    with c2:
+        clear = st.button("Clear chat")
+    with c3:
+        st.write("")
+
+    if clear:
+        st.session_state["followup_messages"] = []
+        st.rerun()
+
+    question = (custom or "").strip()
+    if not question and picked and not picked.startswith("("):
+        question = picked
+
+    # Also support the sticky chat bar if present
+    chat_q = st.chat_input("Or ask here about this verdict…")
+    if chat_q:
+        question = chat_q.strip()
+        ask = True
+
+    if ask and question:
+        history = list(st.session_state.get("followup_messages") or [])
+        history.append({"role": "user", "content": question})
+        try:
+            router = ModelRouter(load_settings())
+            answer = answer_followup(
+                router,
+                result,
+                question,
+                history[:-1],
+                detail=detail_used,
+            )
+        except Exception as exc:
+            answer = f"Couldn’t answer that follow-up: {exc}"
+        history.append({"role": "assistant", "content": answer})
+        st.session_state["followup_messages"] = history
+        run_dir = result.get("run_dir") or (
+            (result.get("result_a") or {}).get("run_dir")
+        )
+        if run_dir:
+            try:
+                append_followup(run_dir, question, answer)
+            except Exception:
+                pass
+        st.rerun()
+    elif ask and not question:
+        st.warning("Pick a suggestion or type a follow-up question.")
+
+
 def main() -> None:
     if not _gate():
         return
@@ -447,9 +550,9 @@ def main() -> None:
         <div class="vl-hero">
           <div class="vl-brand-row">
             <p class="vl-brand">Verdict Loop</p>
-            <span class="vl-chip">v3 · Brief + Memory</span>
+            <span class="vl-chip">v3.1 · Money + Follow-ups</span>
           </div>
-          <div class="vl-banner"><strong>New</strong> Brief answers · Compare plans · Follow-up chat</div>
+          <div class="vl-banner"><strong>Fix</strong> Verified tax math · Suggested follow-up dropdown</div>
           <h1 class="vl-title">Stress-test a plan.<br/><em>Ask follow-ups.</em></h1>
           <p class="vl-lede">
             Brief by default. Compare two plans. Keep chatting about the verdict
@@ -609,53 +712,11 @@ def main() -> None:
             _render_debate(result["result_b"], detail=detail_used)
     else:
         _render_verdict_card(result, title="Bottom line")
+        _render_money_facts(result)
         _render_debate(result, detail=detail_used)
         _render_creative(result)
 
-    st.markdown("---")
-    st.markdown("### Ask a follow-up")
-    st.caption("Memory lasts for this browser session and is saved with the run.")
-
-    for msg in st.session_state.get("followup_messages") or []:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    c1, c2 = st.columns([4, 1])
-    with c2:
-        if st.button("Clear chat"):
-            st.session_state["followup_messages"] = []
-            st.rerun()
-
-    question = st.chat_input("Ask about this verdict…")
-    if question:
-        history = list(st.session_state.get("followup_messages") or [])
-        history.append({"role": "user", "content": question})
-        try:
-            from harness.config import load_settings
-            from harness.followup import answer_followup, append_followup
-            from harness.router import ModelRouter
-
-            router = ModelRouter(load_settings())
-            answer = answer_followup(
-                router,
-                result,
-                question,
-                history[:-1],
-                detail=detail_used,
-            )
-        except Exception as exc:
-            answer = f"Couldn’t answer that follow-up: {exc}"
-        history.append({"role": "assistant", "content": answer})
-        st.session_state["followup_messages"] = history
-        run_dir = result.get("run_dir") or (
-            (result.get("result_a") or {}).get("run_dir")
-        )
-        if run_dir:
-            try:
-                append_followup(run_dir, question, answer)
-            except Exception:
-                pass
-        st.rerun()
+    _ask_followup(result, detail_used)
 
 
 if __name__ == "__main__":
