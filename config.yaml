@@ -22,9 +22,22 @@ models:
   # Different family from Scout so debate contrast isn't Advocate-only
   skeptic: openrouter/google/gemini-2.5-flash
   judge: openrouter/anthropic/claude-fable-5
+  # Dedicated fact-checker — different family from Judge synthesizer
+  qa: openrouter/openai/o3
   promoter: openrouter/google/gemini-2.5-flash
   image_critic: openrouter/google/gemini-2.5-flash
   image_model: black-forest-labs/flux.2-pro
+
+# Follow-up chat behavior
+chat:
+  # Cap how many panel models vote into one consensus (cost + clarity)
+  max_panel: 3
+  synthesizer: openrouter/anthropic/claude-fable-5
+  qa_model: openrouter/openai/o3
+  default_panel:
+    - claude-fable-5
+    - grok-4.5
+    - gpt-5.4-mini
 
 # Full chat + debate picker roster (OpenRouter litellm ids)
 chat_models:
@@ -113,6 +126,7 @@ fallback_models:
   advocate: groq/llama-3.1-8b-instant
   skeptic: gemini/gemini-flash-latest
   judge: gemini/gemini-flash-latest
+  qa: gemini/gemini-flash-latest
   promoter: gemini/gemini-flash-latest
   image_critic: gemini/gemini-flash-latest
 

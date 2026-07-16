@@ -140,46 +140,53 @@ def pick_between_plans(
 
 
 def suggested_followups(result: dict[str, Any]) -> list[str]:
-    """Dropdown suggestions after a run."""
+    """Candidate clarifying questions the app can ask the user (system-led)."""
     suggestions: list[str] = []
     if result.get("mode") == "compare":
         suggestions.extend(
             [
-                "Why is Plan A stronger?",
-                "Why is Plan B stronger?",
-                "What is the biggest risk for each plan?",
-                "What should I do this week to decide?",
+                "Which outcome matters more to you right now — upside or risk control?",
+                "What is your hard deadline for choosing between Plan A and Plan B?",
+                "What constraint would make you drop one plan entirely?",
             ]
         )
-        return suggestions
+        return suggestions[:5]
 
     verdict = ((result.get("debate") or {}).get("verdict") or {})
     for q in verdict.get("focus_questions") or []:
         q = str(q).strip()
         if q and q not in suggestions:
+            # Turn model focus items into questions asked TO the user
+            if not q.endswith("?"):
+                q = q.rstrip(".") + "?"
             suggestions.append(q)
     money = result.get("money_facts") or {}
     if money.get("has_money_signal"):
-        suggestions.extend(
-            [
-                "Walk me through the after-tax math again.",
-                "What tax info do you still need from me?",
-                "What would my monthly take-home be under the mid estimate?",
-            ]
-        )
+        if money.get("missing"):
+            suggestions.append(
+                "Can you share the tax details still missing so I can lock the after-tax math?"
+            )
+        else:
+            suggestions.append(
+                "Does the verified after-tax figure match what you expected to take home?"
+            )
     suggestions.extend(
         [
-            "What should I do this week?",
-            "What is the biggest risk I am underestimating?",
-            "What would make you change this verdict?",
+            "What would have to be true for you to feel good moving forward this week?",
+            "What is the one risk you are most worried about underestimating?",
         ]
     )
-    # de-dupe, cap
     out: list[str] = []
     for s in suggestions:
         if s not in out:
             out.append(s)
-    return out[:8]
+    return out[:6]
+
+
+def opening_question(result: dict[str, Any]) -> str:
+    """First question the app asks the user after a verdict."""
+    qs = suggested_followups(result)
+    return qs[0] if qs else "What part of this verdict do you want to pressure-test first?"
 
 
 def append_followup(run_dir: str | Path, question: str, answer: str) -> None:

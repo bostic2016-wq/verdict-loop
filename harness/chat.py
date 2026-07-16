@@ -124,21 +124,26 @@ def create_chat(
     model_ids: list[str],
     run_result: dict[str, Any] | None = None,
     detail: str = "brief",
+    pending_question: str | None = None,
 ) -> dict[str, Any]:
     catalog = {m["id"]: m for m in default_chat_catalog(settings)}
     selected = [catalog[mid] for mid in model_ids if mid in catalog]
     if not selected:
-        defaults = default_chat_catalog(settings)
-        selected = defaults or [
-            {
-                "id": "judge",
-                "label": "Judge",
-                "role": "judge",
-                "model": (settings.get("models") or {}).get(
-                    "judge", "openrouter/anthropic/claude-sonnet-5"
-                ),
-            }
-        ]
+        # Prefer configured default_panel when present
+        panel_ids = list((_chat_cfg(settings).get("default_panel") or []))
+        selected = [catalog[mid] for mid in panel_ids if mid in catalog]
+        if not selected:
+            defaults = default_chat_catalog(settings)
+            selected = defaults[:3] or [
+                {
+                    "id": "judge",
+                    "label": "Judge",
+                    "role": "judge",
+                    "model": (settings.get("models") or {}).get(
+                        "judge", "openrouter/anthropic/claude-fable-5"
+                    ),
+                }
+            ]
 
     chat: dict[str, Any] = {
         "id": new_chat_id(),
@@ -149,6 +154,7 @@ def create_chat(
         "run_dir": None,
         "run_attached": bool(run_result),
         "messages": [],
+        "pending_question": pending_question,
     }
     if run_result:
         chat["run_dir"] = run_result.get("run_dir") or (
@@ -344,17 +350,27 @@ def append_turn(
     chat: dict[str, Any],
     question: str,
     replies: dict[str, str],
+    *,
+    consensus: str | None = None,
+    next_question: str | None = None,
+    qa_notes: str | None = None,
 ) -> dict[str, Any]:
     chat.setdefault("messages", []).append(
         {"role": "user", "content": question, "ts": datetime.now(timezone.utc).isoformat()}
     )
-    chat["messages"].append(
-        {
-            "role": "assistant",
-            "replies": replies,
-            "ts": datetime.now(timezone.utc).isoformat(),
-        }
-    )
+    assistant: dict[str, Any] = {
+        "role": "assistant",
+        "content": consensus or "",
+        "replies": replies,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    if next_question:
+        assistant["next_question"] = next_question
+    if qa_notes:
+        assistant["qa_notes"] = qa_notes
+    chat["messages"].append(assistant)
+    if next_question:
+        chat["pending_question"] = next_question
     chat["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_chat(settings, chat)
     return chat
@@ -365,3 +381,196 @@ def label_for(chat: dict[str, Any], model_id: str) -> str:
         if m.get("id") == model_id:
             return str(m.get("label") or model_id)
     return model_id
+
+
+CONSENSUS_SYSTEM = """You synthesize multiple model drafts into ONE clear consensus answer.
+Rules:
+- Write plain prose only. No markdown, no italics, no headings, no bullet symbols if you can avoid them.
+- Prefer facts from RUN CONTEXT. Never invent numbers. If VERIFIED MONEY MATH exists, use those figures exactly.
+- Where drafts disagree, say what the consensus is and briefly note the disagreement.
+- Keep it short and decisive unless the user asked for detail.
+- End without asking a question (a separate step will ask the user).
+"""
+
+QA_SYSTEM = """You are Verdict Loop's fact-check auditor (QA).
+You receive RUN CONTEXT, the USER QUESTION, and a DRAFT consensus answer.
+Your job: catch invented facts, wrong money math, and claims not supported by context.
+
+Return plain text in this exact shape:
+VERDICT: PASS or REVISE
+ISSUES: (one short line, or "none")
+ANSWER: (the final answer the user should see — if PASS, copy/tighten the draft; if REVISE, rewrite it correctly using only RUN CONTEXT)
+
+Rules:
+- If VERIFIED MONEY MATH is present, numbers in ANSWER must match it exactly.
+- If something is unknown, say what is missing instead of guessing.
+- Plain prose only. No markdown.
+"""
+
+NEXT_Q_SYSTEM = """You ask the user ONE clarifying follow-up question.
+It should help resolve the biggest remaining uncertainty in the verdict.
+Plain text only — just the question, nothing else. No markdown.
+"""
+
+
+def _chat_cfg(settings: dict[str, Any]) -> dict[str, Any]:
+    cfg = settings.get("chat") or {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _panel_models(
+    chat: dict[str, Any],
+    settings: dict[str, Any],
+    model_ids: list[str] | None,
+) -> list[dict[str, str]]:
+    selected = chat.get("models") or []
+    if model_ids:
+        id_set = set(model_ids)
+        selected = [m for m in selected if m["id"] in id_set]
+    max_panel = int(_chat_cfg(settings).get("max_panel") or 3)
+    return selected[: max(1, max_panel)]
+
+
+def ask_consensus(
+    router: ModelRouter,
+    settings: dict[str, Any],
+    chat: dict[str, Any],
+    question: str,
+    *,
+    model_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Panel models draft in parallel → synthesizer consensus → QA audit → next user question.
+    Returns {replies, consensus, qa_notes, next_question, qa_verdict}.
+    """
+    panel = _panel_models(chat, settings, model_ids)
+    cfg = _chat_cfg(settings)
+    synth_model = str(
+        cfg.get("synthesizer")
+        or (settings.get("models") or {}).get("judge")
+        or "openrouter/anthropic/claude-fable-5"
+    )
+    qa_model = str(
+        cfg.get("qa_model")
+        or (settings.get("models") or {}).get("qa")
+        or "openrouter/openai/o3"
+    )
+
+    # 1) Panel drafts
+    replies = ask_models(router, chat, question, model_ids=[m["id"] for m in panel])
+
+    # 2) Consensus
+    draft_block = "\n\n".join(
+        f"[{label_for(chat, mid)}]:\n{text}" for mid, text in replies.items()
+    )
+    ctx = chat.get("run_context") or "(no run context)"
+    synth_messages = [
+        {"role": "system", "content": CONSENSUS_SYSTEM},
+        {
+            "role": "user",
+            "content": (
+                f"RUN CONTEXT:\n{ctx}\n\n"
+                f"USER QUESTION:\n{question}\n\n"
+                f"MODEL DRAFTS:\n{draft_block}\n\n"
+                "Write the single consensus answer now."
+            ),
+        },
+    ]
+    try:
+        draft = router.complete_model_messages(
+            synth_model,
+            synth_messages,
+            label="synthesizer",
+            temperature=0.2,
+            max_tokens=900,
+        )
+    except Exception as exc:
+        # Fall back to first non-error draft
+        draft = next(
+            (t for t in replies.values() if not str(t).startswith("Error:")),
+            f"Could not build consensus: {exc}",
+        )
+
+    # 3) QA audit (different model family)
+    qa_messages = [
+        {"role": "system", "content": QA_SYSTEM},
+        {
+            "role": "user",
+            "content": (
+                f"RUN CONTEXT:\n{ctx}\n\n"
+                f"USER QUESTION:\n{question}\n\n"
+                f"DRAFT:\n{draft}"
+            ),
+        },
+    ]
+    qa_notes = "none"
+    qa_verdict = "PASS"
+    consensus = draft
+    try:
+        qa_raw = router.complete_model_messages(
+            qa_model,
+            qa_messages,
+            label="qa",
+            fallback=(router.fallbacks or {}).get("qa"),
+            temperature=0.1,
+            max_tokens=900,
+        )
+        qa_verdict, qa_notes, consensus = _parse_qa_block(qa_raw, draft)
+    except Exception as exc:
+        qa_notes = f"QA skipped: {exc}"
+        consensus = draft
+
+    # 4) Next question for the user
+    next_q = ""
+    try:
+        nq_messages = [
+            {"role": "system", "content": NEXT_Q_SYSTEM},
+            {
+                "role": "user",
+                "content": (
+                    f"RUN CONTEXT:\n{ctx}\n\n"
+                    f"USER just said/asked:\n{question}\n\n"
+                    f"CONSENSUS ANSWER we gave them:\n{consensus}\n\n"
+                    "Ask one sharp follow-up question."
+                ),
+            },
+        ]
+        next_q = router.complete_model_messages(
+            synth_model,
+            nq_messages,
+            label="next_question",
+            temperature=0.4,
+            max_tokens=120,
+        ).strip()
+        next_q = next_q.split("\n")[0].strip().strip('"')
+    except Exception:
+        next_q = "What else do you need clarified before you decide?"
+
+    return {
+        "replies": replies,
+        "consensus": consensus,
+        "qa_notes": qa_notes,
+        "qa_verdict": qa_verdict,
+        "next_question": next_q,
+    }
+
+
+def _parse_qa_block(qa_raw: str, draft: str) -> tuple[str, str, str]:
+    """Parse VERDICT / ISSUES / ANSWER from QA model output."""
+    verdict = "PASS"
+    issues = "none"
+    answer = draft
+    for line in qa_raw.splitlines():
+        stripped = line.strip()
+        upper = stripped.upper()
+        if upper.startswith("VERDICT:"):
+            if "REVISE" in upper:
+                verdict = "REVISE"
+        elif upper.startswith("ISSUES:"):
+            issues = stripped.split(":", 1)[-1].strip() or "none"
+    for marker in ("ANSWER:", "Answer:", "answer:"):
+        idx = qa_raw.find(marker)
+        if idx >= 0:
+            answer = qa_raw[idx + len(marker) :].strip()
+            break
+    return verdict, issues, answer or draft
