@@ -57,14 +57,13 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 def _retry_sleep_seconds(exc: Exception, attempt: int) -> float:
-    """Backoff for free-tier throttles (Groq/Gemini 429s)."""
+    """Short backoff, then fall over to the other free provider."""
     msg = str(exc)
-    # "Please retry in 7.5s" style hints from providers
     match = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)\s*s", msg, re.IGNORECASE)
     if match:
-        return max(float(match.group(1)) + 1.0, 3.0)
-    # Free tiers often need a longer cool-down than 2–4s
-    return float(12 * (attempt + 1))
+        # Cap so the UI doesn't look frozen for minutes
+        return min(max(float(match.group(1)) + 0.5, 2.0), 8.0)
+    return float(3 * (attempt + 1))  # 3s, 6s, 9s max path before fallback
 
 
 class ModelRouter:
@@ -84,7 +83,7 @@ class ModelRouter:
 
     def _pace(self) -> None:
         """Small gap between calls so free tiers don't see a burst."""
-        gap = 1.25
+        gap = 0.8
         now = time.time()
         wait = gap - (now - self._last_call_at)
         if wait > 0:
@@ -136,12 +135,13 @@ class ModelRouter:
                 "temperature": temperature,
                 "max_tokens": max_tokens or (2048 if json_mode else 1024),
             }
-            for attempt in range(4):
+            # 2 quick tries, then switch provider — avoids 5-minute UI freezes
+            for attempt in range(2):
                 try:
                     return self._call(kwargs, json_mode=json_mode)
                 except Exception as exc:
                     last_exc = exc
-                    if _is_retryable(exc) and attempt < 3:
+                    if _is_retryable(exc) and attempt < 1:
                         time.sleep(_retry_sleep_seconds(exc, attempt))
                         continue
                     break  # try fallback model

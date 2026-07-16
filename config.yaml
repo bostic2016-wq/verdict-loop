@@ -1,5 +1,4 @@
 debate:
-  # Keep rounds low on free tiers to avoid bursting rate limits
   max_rounds: 2
   pass_score: 8
 
@@ -13,19 +12,18 @@ creative:
   generate_on_reject: true
 
 models:
-  # Split providers so one free tier isn't hit 3x in the same round
+  # Groq for fast debate steps; Gemini for judge/creative (vision)
   scout: groq/llama-3.1-8b-instant
-  advocate: gemini/gemini-flash-latest
+  advocate: groq/llama-3.1-8b-instant
   skeptic: groq/llama-3.1-8b-instant
   judge: gemini/gemini-flash-latest
   promoter: gemini/gemini-flash-latest
   image_critic: gemini/gemini-flash-latest
   image_model: flux
 
-# Cross-provider fallbacks when the primary is rate-limited / busy
 fallback_models:
   scout: gemini/gemini-flash-latest
-  advocate: groq/llama-3.1-8b-instant
+  advocate: gemini/gemini-flash-latest
   skeptic: gemini/gemini-flash-latest
   judge: groq/llama-3.1-8b-instant
   promoter: groq/llama-3.1-8b-instant

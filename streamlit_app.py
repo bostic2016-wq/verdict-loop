@@ -275,7 +275,7 @@ def main() -> None:
             if event in labels:
                 text, pct = labels[event]
                 progress.progress(pct, text=text)
-                status.caption(text)
+                status.caption(text + " (free APIs can pause briefly if rate-limited)")
 
         with st.spinner("Running the loop — usually 1–3 minutes…"):
             try:
