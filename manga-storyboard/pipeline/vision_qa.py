@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from pipeline.creative_bible import bible_excerpt
-from pipeline.prompt_compiler import compile_prompt, resolve_panel_characters
+from pipeline.prompt_compiler import compile_prompt, panel_calls_for_power, resolve_panel_characters
 from pipeline.roles import VISION_SYSTEM, VISION_USER
 from pipeline.router import DirectorRouter
 from pipeline.util import parse_json
@@ -40,6 +40,9 @@ def critique_panel(
         bible_excerpt=bible_excerpt(bible),
         panel=str(panel),
         required_cast=required,
+        power_expected="YES — the script calls for power/energy effects"
+        if panel_calls_for_power(panel)
+        else "NO — there must be NO energy auras or power effects in this panel",
         prior=prior_notes or "(first panel)",
         pass_score=pass_score,
     )

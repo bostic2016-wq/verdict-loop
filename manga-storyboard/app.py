@@ -267,6 +267,11 @@ elif step == "brief":
             ["cinematic", "dense"],
             index=0 if dens != "dense" else 1,
         )
+        brief["color_mode"] = st.selectbox(
+            "Art color",
+            ["full color", "black & white"],
+            index=0 if (brief.get("color_mode") or "full color") == "full color" else 1,
+        )
         brief["world"] = st.text_input("World / setting", value=brief.get("world") or "")
     with c3:
         st.text_area("First-5 focus", value=analysis.get("first_five_focus") or "", disabled=True, height=100)

@@ -57,6 +57,8 @@ def build_bible(
         "aesthetic_name": style.get("name", aesthetic_id),
         "style_positive": (style.get("positive_tags") or "").strip(),
         "style_negative": (style.get("negative_tags") or "").strip(),
+        "style_power": (style.get("power_tags") or "").strip(),
+        "color_mode": brief.get("color_mode") or "full color",
         "style_settings": style.get("settings") or {},
         "framing_hints": style.get("framing_hints") or [],
         "tone": brief.get("tone") or (analysis or {}).get("tone") or "",

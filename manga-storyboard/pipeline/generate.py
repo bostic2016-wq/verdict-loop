@@ -14,7 +14,7 @@ from urllib.parse import quote
 import httpx
 
 
-IMAGE_PIPELINE_BUILD = "2026-07-16-nohang-v5"
+IMAGE_PIPELINE_BUILD = "2026-07-16-color-outfits-v6"
 
 # Nano Banana Pro first (best multi-reference character fidelity).
 # FLUX is the reliable fallback. GPT Image is omitted — openai/gpt-image-2

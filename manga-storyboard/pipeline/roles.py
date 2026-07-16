@@ -142,11 +142,18 @@ Panel brief:
 Required characters for this panel (ALL must be visible):
 {required_cast}
 
+Power/energy effects expected in this panel: {power_expected}
+
 Prior panel notes (continuity):
 {prior}
 
 Score dimensions 0–1: narrative_match, composition, style_fit, technical_clean, continuity, clean_frame, character_presence.
 character_presence = fraction of required cast clearly visible (1.0 only if ALL required characters appear).
+OUTFIT CHECK: each character must wear the outfit from their look description / reference drawing.
+A character in the wrong outfit counts as off-model — reduce character_presence and list it in issues.
+POWER-EFFECT CHECK: if power effects are NOT expected but the image shows energy auras, glowing
+power lines, or crackling energy around characters, score style_fit at most 0.3 and list it in issues
+with rewrite note "remove all energy aura / power effects".
 Hard-fail if narrative_match < 0.4 OR clean_frame < 0.4 OR character_presence < 1.0 when required cast is non-empty.
 pass = weighted_score >= {pass_score} AND no hard-fail.
 

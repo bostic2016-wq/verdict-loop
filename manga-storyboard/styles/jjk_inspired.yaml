@@ -6,15 +6,20 @@ description: >
   shonen battle manga line language (not a copy of any specific series).
 
 positive_tags: >
-  professional black-and-white manga panel in the style of a modern dark
-  battle-shonen weekly serialization (Jujutsu Kaisen-inspired line language):
-  rough, energetic G-pen inking with variable line weight, heavy solid black
-  spot shadows, gritty cross-hatching on faces during tension, screentone
-  gradients for atmosphere, urban Japan settings with realistic perspective,
-  sharp angular jawlines and intense hooded eyes, dynamic foreshortened
-  action poses, cursed-energy style crackling aura effects drawn with jagged
-  ink strokes, dramatic low-angle and dutch-tilt camera work, cinematic
-  negative space, raw kinetic impact frames
+  professional full-color manga panel in the style of a modern dark
+  battle-shonen anime adaptation (Jujutsu Kaisen-inspired line language):
+  rough, energetic G-pen ink linework with variable line weight over rich
+  color, deep high-contrast cel shading, moody desaturated urban color
+  palette with striking accent colors, gritty cross-hatching on faces during
+  tension, urban Japan settings with realistic perspective, sharp angular
+  jawlines and intense hooded eyes, dynamic foreshortened action poses,
+  dramatic low-angle and dutch-tilt camera work, cinematic negative space,
+  raw kinetic impact framing
+
+# Only injected when the script beat explicitly calls for powers/energy
+power_tags: >
+  crackling cursed-energy style aura with jagged ink strokes,
+  glowing power emanation surrounding the character
 
 negative_tags: >
   photorealistic, photograph, 3d render, soft blur, watercolor, pastel,

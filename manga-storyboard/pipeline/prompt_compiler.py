@@ -77,6 +77,22 @@ def collect_reference_paths(cast: list[dict[str, Any]]) -> list[Any]:
     return out
 
 
+# A panel only gets aura/energy effects when its own text asks for them
+_POWER_WORDS = re.compile(
+    r"\b(aura|cursed energy|nen|power|powers|energy|technique|spell|magic|glow|glowing|"
+    r"unleash|charge[sd]? up|transform|blast|beam|summon|manifest|domain|ability|abilities|"
+    r"supernatural|erupt)\b",
+    re.IGNORECASE,
+)
+
+
+def panel_calls_for_power(panel: dict[str, Any]) -> bool:
+    blob = " ".join(
+        str(panel.get(k) or "") for k in ("subject", "action", "emotion", "dialogue", "notes")
+    )
+    return bool(_POWER_WORDS.search(blob))
+
+
 def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[str, Any]:
     """Deterministic compiler — prioritizes full character cast visibility + ref binding."""
     cast = resolve_panel_characters(bible, panel)
@@ -109,12 +125,44 @@ def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[s
             f"Do not omit any of them. Do not add extra people."
         )
 
+    # Outfit lock — same clothes in every panel, matching look/reference
+    outfit_line = ""
+    if cast:
+        outfit_line = (
+            "OUTFIT CONSISTENCY: each character wears the EXACT same outfit as described "
+            "in their look and shown in their reference image — identical clothing, colors, "
+            "and accessories in every panel, no costume changes"
+        )
+
+    # Power effects only when the script beat calls for them
+    wants_power = panel_calls_for_power(panel)
+    power_line = ""
+    no_power_negatives = ""
+    if wants_power:
+        power_line = (bible.get("style_power") or "").replace("\n", " ").strip()
+    else:
+        no_power_negatives = (
+            "energy aura, glowing aura, power lines radiating from characters, "
+            "energy effects, magical glow, lightning crackle around body, speed lines"
+        )
+
+    color_mode = (bible.get("color_mode") or "full color").strip().lower()
+    if color_mode.startswith("black"):
+        color_line = "black and white manga ink art with screentones, no color"
+        color_negative = "colored artwork, full color"
+    else:
+        color_line = "FULL COLOR artwork, rich vibrant anime-style coloring, colored illustration"
+        color_negative = "black and white, monochrome, greyscale, uncolored line art, screentone-only shading"
+
     positive_parts = [
         (bible.get("style_positive") or "").replace("\n", " ").strip(),
+        color_line,
         "single manga panel, no collage, no comic page layout, no borders",
         count_line,
         ref_block,
+        outfit_line,
         f"required cast: {cast_block}",
+        power_line,
         f"shot: {panel.get('shot_type', 'medium')}",
         f"subject: {panel.get('subject', '')}",
         f"action: {panel.get('action', '')}",
@@ -130,11 +178,14 @@ def compile_prompt_local(bible: dict[str, Any], panel: dict[str, Any]) -> dict[s
         for p in [
             (bible.get("style_negative") or "").replace("\n", " ").strip(),
             ", ".join(bible.get("do_not") or []),
+            color_negative,
+            no_power_negatives,
             "missing character",
             "one character only when multiple required",
             "crowd of extras",
             "faceless blobs",
             "cropped out main character",
+            "outfit change, different clothes than reference, inconsistent costume",
         ]
         if p
     )
