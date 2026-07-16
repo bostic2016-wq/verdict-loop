@@ -14,7 +14,7 @@ from urllib.parse import quote
 import httpx
 
 
-IMAGE_PIPELINE_BUILD = "2026-07-16-color-outfits-v6"
+IMAGE_PIPELINE_BUILD = "2026-07-16-v5-video-tokens"
 
 # Nano Banana Pro first (best multi-reference character fidelity).
 # FLUX is the reliable fallback. GPT Image is omitted — openai/gpt-image-2
@@ -85,9 +85,19 @@ def generate_panel_image(
 
 def _model_chain(settings: dict[str, Any]) -> list[str]:
     models_cfg = settings.get("models") or {}
+    # Prefer explicit image profiles (v5)
+    profile = models_cfg.get("image_profile")
+    profiles = models_cfg.get("image_profiles") or {}
+    if profile and isinstance(profiles, dict):
+        prof = profiles.get(profile) or {}
+        chain = prof.get("chain")
+        if isinstance(chain, list) and chain:
+            # Drop known-hanging GPT Image 2 unless the chain is just that one model
+            return [str(m) for m in chain if str(m) != "openai/gpt-image-2" or len(chain) == 1]
+
+    # Backwards-compatible: global image_model_chain
     chain = models_cfg.get("image_model_chain")
     if isinstance(chain, list) and chain:
-        # Drop known-hanging GPT Image 2 unless user explicitly only wants it
         return [str(m) for m in chain if str(m) != "openai/gpt-image-2" or len(chain) == 1]
     primary = models_cfg.get("image_model")
     out = [primary] if primary else []

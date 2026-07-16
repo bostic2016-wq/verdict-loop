@@ -17,10 +17,11 @@ class ProviderError(RuntimeError):
 
 
 class DirectorRouter:
-    def __init__(self, settings: dict[str, Any]):
+    def __init__(self, settings: dict[str, Any], run_dir: Path | None = None):
         self.settings = settings
         self.models = settings.get("models", {})
         self.fallbacks = settings.get("fallback_models", {})
+        self.run_dir = run_dir
 
     def complete(
         self,
@@ -37,7 +38,9 @@ class DirectorRouter:
         last_err: Exception | None = None
         for candidate in candidates:
             try:
-                return self._call(candidate, system, user, json_mode=json_mode, temperature=temperature)
+                text = self._call(candidate, system, user, json_mode=json_mode, temperature=temperature)
+                self._track(role, candidate, system + "\n" + user, text)
+                return text
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
                 if not self._retryable(exc):
@@ -80,9 +83,29 @@ class DirectorRouter:
             kwargs["response_format"] = {"type": "json_object"}
         try:
             resp = litellm.completion(**kwargs)
-            return resp.choices[0].message.content or ""
+            text = resp.choices[0].message.content or ""
+            self._track(role, model, system + "\n" + user, text, images=len(image_paths))
+            return text
         except Exception as exc:  # noqa: BLE001
             raise ProviderError(str(exc)) from exc
+
+    def _track(self, role: str, model: str, prompt: str, response: str, *, images: int = 0) -> None:
+        if not self.run_dir:
+            return
+        try:
+            from pipeline.tokens import record_llm_call
+
+            # Vision calls: pad input estimate slightly for attached images
+            extra = " " * (images * 800) if images else ""
+            record_llm_call(
+                self.run_dir,
+                role=role,
+                model=str(model),
+                prompt_text=prompt + extra,
+                response_text=response,
+            )
+        except Exception:  # noqa: BLE001 — usage must never break generation
+            pass
 
     def _call(
         self,

@@ -3,11 +3,23 @@ models:
   vision_critic: openrouter/google/gemini-2.5-flash
   # openrouter = Images API via OpenRouter (uses OPENROUTER_API_KEY)
   image_backend: openrouter
-  # Nano Banana Pro first; FLUX as fast reliable fallback.
-  # GPT Image removed — openai/gpt-image-2 hung >45s and froze panel batches.
+  # Which image profile to use for panels.
+  # - nano_banana_flux: Nano Banana Pro → FLUX.2 Pro (general default)
+  # - anime_seedream: Seedream 4.5 → FLUX.2 Pro (anime-focused)
+  image_profile: nano_banana_flux
+  # Fallback chain if no profile-specific chain is found.
   image_model_chain:
     - google/gemini-3-pro-image
     - black-forest-labs/flux.2-pro
+  image_profiles:
+    nano_banana_flux:
+      chain:
+        - google/gemini-3-pro-image
+        - black-forest-labs/flux.2-pro
+    anime_seedream:
+      chain:
+        - bytedance-seed/seedream-4.5
+        - black-forest-labs/flux.2-pro
 
 openrouter:
   image_url: https://openrouter.ai/api/v1/images
@@ -34,6 +46,19 @@ sequence_qa:
 pilot:
   panel_count: 5
   batch_size: 5
+
+video:
+  enabled: false
+  model: google/veo-3.1-lite
+  duration: 4        # seconds
+  resolution: 720p
+  aspect_ratio: 16:9
+  max_wait_seconds: 240
+
+costs:
+  per_1k_tokens_usd: 0.002   # rough estimate for LLM calls (for usage display only)
+  per_image_usd: 0.03        # approximate image cost
+  per_video_usd: 0.20        # approximate short video clip cost
 
 paths:
   library_dir: library

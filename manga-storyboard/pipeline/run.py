@@ -51,6 +51,12 @@ def generate_batch(
             generate_fn=generate_panel_image,
             prior_notes=prior_notes,
         )
+        try:
+            from pipeline.tokens import record_image
+
+            record_image(run_dir, 1)
+        except Exception:  # noqa: BLE001
+            pass
         merged = {**panel, **record}
         results.append(merged)
         prior_notes = f"{panel.get('shot_type')}: {panel.get('action')} | {panel.get('continuity', '')}"

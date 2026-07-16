@@ -31,6 +31,8 @@ from pipeline.style_library import (
     save_character_map,
     upsert_character,
 )
+from pipeline.tokens import load_usage, record_image, record_video, summarize_usage
+from pipeline.video import VideoGenError, generate_first5_clip
 from pipeline.util import list_styles, load_settings, new_run_dir, save_json
 
 st.set_page_config(page_title="Manga Storyboard", page_icon="📖", layout="wide")
@@ -65,6 +67,7 @@ DEFAULTS = {
     "all_panels": [],
     "sequence": None,
     "qa_round": 0,
+    "pilot_video_path": None,
 }
 
 
@@ -80,7 +83,8 @@ style_ids = [s["id"] for s in styles]
 
 
 def router() -> DirectorRouter:
-    return DirectorRouter(settings)
+    run_dir = Path(st.session_state.run_dir) if st.session_state.get("run_dir") else None
+    return DirectorRouter(settings, run_dir=run_dir)
 
 
 # ---------- Sidebar: style library ----------
@@ -134,7 +138,7 @@ with st.sidebar:
     mock = st.checkbox(
         "Mock images (no API spend)",
         value=False,
-        help="OFF = real panels (Nano Banana Pro → GPT Image). ON = placeholder panels only.",
+        help="OFF = real panels (Nano Banana Pro → FLUX). ON = placeholder panels only.",
     )
     if mock:
         settings.setdefault("models", {})["image_backend"] = "mock"
@@ -145,7 +149,46 @@ with st.sidebar:
         os.environ.pop("MANGA_MOCK_IMAGES", None)
         os.environ.pop("MANGA_FORCE_MOCK", None)
         settings.setdefault("models", {})["image_backend"] = "openrouter"
-        st.caption("Image backend: Nano Banana Pro → FLUX (character refs on)")
+
+    profiles = (settings.get("models") or {}).get("image_profiles") or {}
+    profile_ids = list(profiles.keys()) or ["nano_banana_flux"]
+    current_profile = (settings.get("models") or {}).get("image_profile") or profile_ids[0]
+    if current_profile not in profile_ids:
+        current_profile = profile_ids[0]
+    profile_labels = {
+        "nano_banana_flux": "Nano Banana Pro → FLUX (default)",
+        "anime_seedream": "Seedream 4.5 → FLUX (anime)",
+    }
+    chosen = st.selectbox(
+        "Image model profile",
+        profile_ids,
+        index=profile_ids.index(current_profile),
+        format_func=lambda i: profile_labels.get(i, i),
+        help="Anime profile uses Seedream 4.5 for stronger stylized manga look.",
+    )
+    settings.setdefault("models", {})["image_profile"] = chosen
+    st.caption(f"Active: {profile_labels.get(chosen, chosen)}")
+
+    st.divider()
+    video_cfg = settings.get("video") or {}
+    default_video_enabled = bool(video_cfg.get("enabled", False))
+    video_enabled = st.checkbox(
+        "Enable 5-panel video (experimental)",
+        value=st.session_state.get("video_enabled", default_video_enabled),
+        help="When ON, you can turn the first 5 approved panels into a short clip via OpenRouter video.",
+    )
+    st.session_state.video_enabled = video_enabled
+
+    if st.session_state.get("run_dir"):
+        try:
+            summary = summarize_usage(load_usage(Path(st.session_state.run_dir)), settings)
+            st.markdown("**Run usage**")
+            st.caption(
+                f"~{summary['tokens']:,} tokens · {summary['images']} imgs · "
+                f"{summary['videos']} videos · est ${summary['est_cost_usd']:.3f}"
+            )
+        except Exception:
+            pass
 
     try:
         from pipeline.generate import IMAGE_PIPELINE_BUILD
@@ -502,6 +545,67 @@ elif step in {"pilot", "continue"}:
                                     x for x in new_list if int(x.get("index", 0)) <= 5
                                 ]
                             st.rerun()
+
+    # Optional: generate a short clip from the first 5 panels
+    if step == "pilot" and st.session_state.pilot_panels:
+        st.divider()
+        st.markdown("#### 5-panel video (optional)")
+        if st.session_state.get("video_enabled", False):
+            if st.session_state.get("pilot_video_path"):
+                st.video(st.session_state.pilot_video_path)
+            if st.button("Generate 5-panel video", use_container_width=True):
+                if not run_dir:
+                    st.error("Missing run dir")
+                else:
+                    out = run_dir / "video" / "pilot_5.mp4"
+                    panel_paths = [
+                        Path(p["path"]) for p in st.session_state.pilot_panels if p.get("path") and Path(p["path"]).exists()
+                    ]
+                    if not panel_paths:
+                        st.error("No panel images found on disk for video generation.")
+                    else:
+                        with st.spinner("Generating 5-panel video clip…"):
+                            try:
+                                vpath = generate_first5_clip(
+                                    settings,
+                                    bible,
+                                    st.session_state.pilot_panels,
+                                    panel_paths,
+                                    out,
+                                )
+                            except VideoGenError as e:
+                                st.error(str(e))
+                                st.stop()
+                            except Exception as e:  # noqa: BLE001
+                                st.error(f"Video generation failed: {e}")
+                                st.stop()
+                        st.session_state.pilot_video_path = str(vpath)
+                        try:
+                            record_video(run_dir, 1)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        st.rerun()
+        else:
+            st.caption("Turn on “5-panel video” in the sidebar to enable clip generation.")
+
+    # Token / cost summary for this run
+    if run_dir:
+        try:
+            summary = summarize_usage(load_usage(run_dir), settings)
+            with st.expander("Run usage (tokens / cost estimate)", expanded=False):
+                st.write(
+                    f"**Tokens:** ~{summary['tokens']:,}  ·  **Images:** {summary['images']}  ·  "
+                    f"**Videos:** {summary['videos']}  ·  **Est. cost:** ${summary['est_cost_usd']:.3f}"
+                )
+                if summary.get("by_role"):
+                    st.caption("By role: " + ", ".join(f"{k}={v}" for k, v in summary["by_role"].items()))
+                bd = summary.get("breakdown_usd") or {}
+                st.caption(
+                    f"Breakdown — LLM ${bd.get('llm', 0):.3f} · images ${bd.get('images', 0):.3f} · "
+                    f"videos ${bd.get('videos', 0):.3f}"
+                )
+        except Exception:
+            pass
 
     st.divider()
     a, b, c = st.columns(3)

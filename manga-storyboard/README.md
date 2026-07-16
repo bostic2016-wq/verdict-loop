@@ -1,46 +1,35 @@
-# Manga Storyboard
+# Manga Storyboard (v5)
 
-Local web app that turns a manga **transcript PDF** into storyboard panels.
+Local web app that turns a manga **transcript PDF** into storyboard panels — with optional **5-panel video** and a **token/cost usage** view.
 
-**Flow:** Upload PDF → analyze → editable brief + gap questions → **5-panel pilot** → lock & continue.  
-**Quality:** Creative bible → panel grammar → per-panel vision QA → sequence editorial read.  
-**Style:** Built-in **JJK-inspired** / **HxH-inspired** aesthetic presets (legal prompt packs — not copyrighted training data) + your own drawings as references.
+**Flow:** Upload PDF → analyze → editable brief + gap questions → **5-panel pilot** → optional video clip → lock & continue.  
+**Quality:** Creative bible → panel grammar → per-panel vision QA.  
+**Style:** Built-in **JJK-inspired** / **HxH-inspired** aesthetic presets + your own character drawings as references.
 
-## Public demo (Streamlit Community Cloud) — separate app / URL
+## What's new in v5
 
-This app is deployed **separately** from Verdict Loop so it gets its own `*.streamlit.app` link.
+- **Image model profiles** (sidebar):
+  - `Nano Banana Pro → FLUX` (default, strong multi-reference fidelity)
+  - `Seedream 4.5 → FLUX` (anime-focused OpenRouter model)
+- **Optional 5-panel video**: toggle in the sidebar, then generate a short OpenRouter clip from the pilot panels
+- **Run usage / token view**: estimated tokens, image counts, video counts, and rough USD cost per run
+- Full-color panels by default; power auras only when the script calls for them; outfit consistency locked to character looks/refs
 
-### Deploy (one-time)
+## Public demo (Streamlit Community Cloud)
 
-1. Push this folder to GitHub as its own repo (recommended), e.g. `bostic2016-wq/manga-storyboard`
-2. Go to [share.streamlit.io](https://share.streamlit.io/) → **Create app**
-3. Settings:
-   - Repository: `bostic2016-wq/manga-storyboard`
-   - Branch: `main`
-   - Main file: `app.py`
-   - **Custom subdomain:** `manga-storyboard` (or any free name) → URL like `https://manga-storyboard.streamlit.app`
-4. **Advanced → Secrets** paste:
+Deploy as a **separate** app from Verdict Loop:
+
+1. Repo: `bostic2016-wq/verdict-loop` (or your fork)
+2. Main file: `manga-storyboard/app.py`
+3. Custom subdomain: e.g. `manga-storyboard`
+4. Secrets:
 
 ```toml
 OPENROUTER_API_KEY = "sk-or-your-key"
-
-# Optional image gen
-# FAL_KEY = "your-fal-key"
-
-# Optional: lock the public page
-# APP_PASSWORD = "pick-a-password"
+# Optional: APP_PASSWORD = "pick-a-password"
 ```
 
-5. Deploy
-
-**Do not** point this deploy at Verdict Loop’s `streamlit_app.py` — that would reuse/replace the other app’s link.
-
-### Alternate: same monorepo, different entrypoint
-
-If the code lives under `verdict-loop/manga-storyboard/`:
-
-- Main file path: `manga-storyboard/app.py`
-- Custom subdomain: still set to something like `manga-storyboard` so the URL stays separate from Verdict Loop
+Reboot the Streamlit app after each push so it picks up the new build stamp in the sidebar.
 
 ## Quick start (local)
 
@@ -50,48 +39,41 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Add OPENROUTER_API_KEY (required for analysis / QA)
-# Optional: FAL_KEY for real images — or check "Mock images" in the sidebar
+# Add OPENROUTER_API_KEY
 streamlit run app.py
 ```
-
-Open the URL Streamlit prints (usually `http://localhost:8501`).
 
 ## API keys
 
 | Key | Used for |
 |-----|----------|
-| `OPENROUTER_API_KEY` | Director LLM (Claude) + vision QA |
-| `FAL_KEY` | Image generation (Fal). Optional if you use **Mock images** |
-| `GROQ_API_KEY` / `GEMINI_API_KEY` | Optional fallbacks |
+| `OPENROUTER_API_KEY` | Director LLM, vision QA, images, video |
+| `GROQ_API_KEY` / `GEMINI_API_KEY` | Optional LLM fallbacks |
 
-Without image keys, enable **Mock images** in the sidebar to test the full workflow with placeholder panels.
+Use **Mock images** in the sidebar to test the workflow without image spend.
 
-## Config
+## Config highlights (`config.yaml`)
 
-See [`config.yaml`](config.yaml):
-
-- `models.director` / `models.vision_critic`
-- `models.image_backend`: `fal_illustrious` | `openrouter_gpt_image` | `mock`
-- `vision_qa.pass_score` / `max_retries`
-- `pilot.panel_count` (default 5)
-
-Style presets live in [`styles/`](styles/) (`jjk_inspired.yaml`, `hxh_inspired.yaml`).
+- `models.image_profile` / `models.image_profiles` — switch Nano Banana vs Seedream chains
+- `video.enabled`, `video.model` (default `google/veo-3.1-lite`), duration / resolution
+- `costs.*` — estimates used only for the usage display
+- `vision_qa`, `pilot.panel_count`
 
 ## Project layout
 
 ```
 manga-storyboard/
-  app.py                 # Streamlit UI
+  app.py
   config.yaml
-  pipeline/              # ingest, analyze, bible, grammar, generate, QA, export
-  styles/                # aesthetic presets
-  library/               # your uploaded drawings
-  outputs/runs/          # each run's panels + JSON
+  pipeline/          # ingest, analyze, generate, video, tokens, QA, export
+  styles/            # jjk_inspired, hxh_inspired
+  library/           # uploaded drawings + remembered characters
+  outputs/runs/      # panels, usage.json, optional video/
 ```
 
 ## Notes
 
-- We do **not** ship models trained on official JJK / Hunter × Hunter pages (copyright). Presets approximate those aesthetics via prompt/settings language.
-- Dialogue appears as **captions under panels** (not in-image speech bubbles) in V1.
-- Exports are clean PNGs — no score overlays baked into the art.
+- Style presets approximate battle-/adventure-shonen aesthetics via prompt language — they are **not** trained on copyrighted pages.
+- Dialogue stays as captions under panels (not in-image bubbles).
+- Video is **opt-in** and can take minutes; it costs OpenRouter video credits.
+- Token counts are estimates unless the provider returns exact usage.
