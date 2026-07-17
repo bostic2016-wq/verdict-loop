@@ -47,6 +47,14 @@ st.set_page_config(page_title="Manga Storyboard", page_icon="📖", layout="wide
 # Load secrets/env before anything else that needs API keys
 settings = load_settings()
 
+# Ensure Desktop model folders exist (Nano Banana / Seedream / FLUX / …)
+try:
+    from pipeline.desktop_export import ensure_model_folders
+
+    ensure_model_folders()
+except Exception:
+    pass
+
 # Optional public-page lock (Streamlit Cloud secrets: APP_PASSWORD)
 _app_password = __import__("os").environ.get("APP_PASSWORD", "").strip()
 if _app_password:
@@ -224,18 +232,75 @@ with st.sidebar:
     if current_profile not in profile_ids:
         current_profile = profile_ids[0]
     profile_labels = {
-        "nano_banana_flux": "Nano Banana Pro → FLUX (default)",
-        "anime_seedream": "Seedream 4.5 → FLUX (anime)",
+        "nano_banana_flux": "Nano Banana Pro → FLUX (fallback chain)",
+        "anime_seedream": "Seedream 4.5 → FLUX (fallback chain)",
     }
-    chosen = st.selectbox(
-        "Image model profile",
-        profile_ids,
-        index=profile_ids.index(current_profile),
-        format_func=lambda i: profile_labels.get(i, i),
-        help="Anime profile uses Seedream 4.5 for stronger stylized manga look.",
+
+    from pipeline.image_catalog import image_catalog, merge_catalog_with_live
+
+    run_mode = st.radio(
+        "Image run mode",
+        ["Fallback chain", "Run all selected"],
+        index=1 if (settings.get("models") or {}).get("image_run_mode") == "all_selected" else 0,
+        help=(
+            "Fallback chain: try one profile's models until one succeeds. "
+            "Run all selected: generate with every checked model (Nano Banana + Seedream + …) "
+            "and save each to its Desktop folder."
+        ),
     )
-    settings.setdefault("models", {})["image_profile"] = chosen
-    st.caption(f"Active: {profile_labels.get(chosen, chosen)}")
+    settings.setdefault("models", {})["image_run_mode"] = (
+        "all_selected" if run_mode == "Run all selected" else "fallback"
+    )
+
+    if run_mode == "Run all selected":
+        catalog = list(st.session_state.get("image_catalog_live") or image_catalog(settings))
+        if not catalog:
+            catalog = image_catalog(settings)
+        id_to_label = {c["id"]: c["label"] for c in catalog}
+        default_selected = list(
+            (settings.get("models") or {}).get("image_models_selected")
+            or [
+                "google/gemini-3-pro-image",
+                "bytedance-seed/seedream-4.5",
+            ]
+        )
+        # Keep only ids that still exist in the catalog
+        default_selected = [m for m in default_selected if m in id_to_label] or [catalog[0]["id"]]
+        chosen_models = st.multiselect(
+            "Models to run",
+            options=[c["id"] for c in catalog],
+            default=default_selected,
+            format_func=lambda i: id_to_label.get(i, i),
+            help="Each selected model gets its own prompt + Desktop folder copy.",
+        )
+        if not chosen_models:
+            st.warning("Select at least one model — falling back to Nano Banana Pro.")
+            chosen_models = ["google/gemini-3-pro-image"]
+        settings.setdefault("models", {})["image_models_selected"] = chosen_models
+        if st.button("Refresh OpenRouter image models", use_container_width=True):
+            live = merge_catalog_with_live(settings)
+            st.session_state.image_catalog_live = live
+            st.success(f"Loaded {len(live)} image models.")
+            st.rerun()
+        st.caption(
+            f"Will run {len(chosen_models)} model(s) per panel. "
+            "Copies land in ~/Desktop/Manga Storyboard/<model>/."
+        )
+    else:
+        chosen = st.selectbox(
+            "Image model profile",
+            profile_ids,
+            index=profile_ids.index(current_profile),
+            format_func=lambda i: profile_labels.get(i, i),
+            help="Anime profile uses Seedream 4.5 for stronger stylized manga look.",
+        )
+        settings.setdefault("models", {})["image_profile"] = chosen
+        settings.setdefault("models", {})["image_run_mode"] = "fallback"
+        st.caption(f"Active: {profile_labels.get(chosen, chosen)}")
+        st.caption(
+            "Prompts are shaped for the chosen model. Finished panels auto-save to "
+            "~/Desktop/Manga Storyboard/<Nano Banana|Seedream|FLUX>/."
+        )
 
     st.divider()
     st.caption("Use the Create drawer on the filmstrip to make stills or video from selected panels.")
@@ -612,6 +677,16 @@ elif step in {"pilot", "continue"}:
                     st.markdown(f"**P{idx}** · `{p.get('shot_type')}` · {status}")
                     if p.get("path") and Path(p["path"]).exists():
                         st.image(p["path"], use_container_width=True)
+                    variants = [v for v in (p.get("variants") or []) if v.get("ok") and v.get("path")]
+                    if len(variants) > 1:
+                        with st.expander(f"All models ({len(variants)})", expanded=False):
+                            vcols = st.columns(min(len(variants), 3))
+                            for i, v in enumerate(variants):
+                                with vcols[i % len(vcols)]:
+                                    label = (v.get("model") or "").split("/")[-1]
+                                    st.caption(label)
+                                    if Path(v["path"]).exists():
+                                        st.image(v["path"], use_container_width=True)
                     st.caption(p.get("dialogue") or p.get("action") or "")
                     st.checkbox("Select", key=f"sel_{idx}")
 

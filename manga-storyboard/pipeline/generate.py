@@ -14,7 +14,7 @@ from urllib.parse import quote
 import httpx
 
 
-IMAGE_PIPELINE_BUILD = "2026-07-16-button-audit"
+IMAGE_PIPELINE_BUILD = "2026-07-16-multi-model"
 
 # Nano Banana Pro first (best multi-reference character fidelity).
 # FLUX is the reliable fallback. GPT Image is omitted — openai/gpt-image-2
@@ -47,38 +47,124 @@ def generate_panel_image(
     reference_paths: list[Path] | None = None,
     strict: bool | None = None,
 ) -> Path:
+    """Generate one panel image.
+
+    When models.image_run_mode is all_selected, every checked OpenRouter model
+    gets its own variant (prompt shaped per model, Desktop folder per model).
+    The first success becomes the primary path used by the filmstrip/QA.
+    """
     if strict is None:
         strict = bool((settings.get("generation") or {}).get("strict"))
     backend = _resolve_backend(settings)
     width = width or settings.get("defaults", {}).get("image_width", 768)
     height = height or settings.get("defaults", {}).get("image_height", 1024)
 
-    full_prompt = prompt.strip()
-    if negative_prompt:
-        full_prompt = f"{full_prompt}. Avoid: {negative_prompt[:400]}"
+    from pipeline.desktop_export import save_image_to_desktop
+    from pipeline.image_catalog import model_slug, run_mode, selected_model_ids
+    from pipeline.model_prompts import adapt_prompt_for_model, adapt_prompt_for_settings
 
+    panel_index = _panel_index_from_path(out_path)
+
+    def _finalize(path: Path, *, model_id: str | None = None, used_backend: str | None = None) -> Path:
+        try:
+            desktop = save_image_to_desktop(
+                path,
+                model_id=model_id,
+                backend=used_backend or backend,
+                panel_index=panel_index,
+                settings=settings,
+            )
+            if desktop:
+                print(f"[manga-gen] desktop copy → {desktop}", file=sys.stderr, flush=True)
+        except Exception as exc:  # noqa: BLE001 — desktop export must never break generation
+            print(f"[manga-gen] desktop export skipped: {exc}", file=sys.stderr, flush=True)
+        return path
+
+    def _write_one(model: str | None, dest: Path, *, used_backend: str) -> Path:
+        if used_backend == "mock":
+            adapted_p, adapted_n = adapt_prompt_for_settings(prompt, negative_prompt or "", settings)
+            if model:
+                adapted_p, adapted_n = adapt_prompt_for_model(prompt, negative_prompt or "", model)
+            full = _with_avoid(adapted_p, adapted_n)
+            return _finalize(_mock_image(dest, full, width, height), model_id=model, used_backend="mock")
+        if used_backend == "pollinations":
+            adapted_p, adapted_n = adapt_prompt_for_settings(prompt, negative_prompt or "", settings)
+            full = _with_avoid(adapted_p, adapted_n)
+            return _finalize(
+                _pollinations(full, dest, width, height, seed),
+                used_backend="pollinations",
+            )
+        assert model is not None
+        model_prompt, model_neg = adapt_prompt_for_model(prompt, negative_prompt or "", model)
+        full_prompt = _with_avoid(model_prompt, model_neg)
+        print(f"[manga-gen] trying {model} → {dest.name}", file=sys.stderr, flush=True)
+        path = _openrouter_images_api(
+            settings,
+            model,
+            full_prompt,
+            dest,
+            seed=seed,
+            reference_paths=reference_paths,
+        )
+        print(f"[manga-gen] ok {model} → {dest.name}", file=sys.stderr, flush=True)
+        return _finalize(path, model_id=model, used_backend="openrouter")
+
+    # ---- Multi-model: run every selected model, keep all variants ----
+    if run_mode(settings) == "all_selected":
+        models = selected_model_ids(settings)
+        if not models:
+            models = _model_chain(settings)[:1]
+        variants: list[dict[str, Any]] = []
+        primary: Path | None = None
+        last_err: Exception | None = None
+        used = "mock" if backend == "mock" else ("pollinations" if backend == "pollinations" else "openrouter")
+        for model in models:
+            slug = model_slug(model)
+            dest = out_path.with_name(f"{out_path.stem}__{slug}{out_path.suffix}")
+            try:
+                if used == "openrouter":
+                    path = _write_one(model, dest, used_backend="openrouter")
+                else:
+                    path = _write_one(model, dest, used_backend=used)
+                variants.append({"model": model, "path": str(path), "ok": True})
+                if primary is None:
+                    primary = path
+            except Exception as exc:  # noqa: BLE001 — keep going so other models still run
+                last_err = exc
+                print(f"[manga-gen] fail {model}: {exc}", file=sys.stderr, flush=True)
+                variants.append({"model": model, "path": None, "ok": False, "error": str(exc)})
+        if primary is not None:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(primary.read_bytes())
+            _write_variants_sidecar(
+                out_path,
+                variants,
+                primary_model=next((v["model"] for v in variants if v.get("ok")), None),
+            )
+            return out_path
+        if used == "openrouter" and strict:
+            raise ImageGenError(f"All selected image models failed: {last_err}")
+        # else fall through to single-path behavior
+
+    # ---- Single / fallback chain (original behavior) ----
     if backend == "mock":
-        return _mock_image(out_path, full_prompt, width, height)
+        return _write_one(None, out_path, used_backend="mock")
     if backend == "pollinations":
         if strict:
             raise ImageGenError(
                 "OPENROUTER_API_KEY missing — strict mode does not fall back to Pollinations"
             )
-        return _pollinations(full_prompt, out_path, width, height, seed)
+        return _write_one(None, out_path, used_backend="pollinations")
 
-    last_err: Exception | None = None
+    last_err = None
     for model in _model_chain(settings):
         try:
-            print(f"[manga-gen] trying {model} → {out_path.name}", file=sys.stderr, flush=True)
-            path = _openrouter_images_api(
-                settings,
-                model,
-                full_prompt,
+            path = _write_one(model, out_path, used_backend="openrouter")
+            _write_variants_sidecar(
                 out_path,
-                seed=seed,
-                reference_paths=reference_paths,
+                [{"model": model, "path": str(path), "ok": True}],
+                primary_model=model,
             )
-            print(f"[manga-gen] ok {model} → {out_path.name}", file=sys.stderr, flush=True)
             return path
         except Exception as exc:  # noqa: BLE001 — try next model
             last_err = exc
@@ -87,9 +173,60 @@ def generate_panel_image(
         raise ImageGenError(f"All OpenRouter image models failed: {last_err}")
     try:
         print("[manga-gen] falling back to pollinations", file=sys.stderr, flush=True)
-        return _pollinations(full_prompt, out_path, width, height, seed)
+        return _write_one(None, out_path, used_backend="pollinations")
     except Exception as exc:  # noqa: BLE001
         raise ImageGenError(f"All image backends failed: {last_err}; pollinations: {exc}") from exc
+
+
+def _write_variants_sidecar(
+    out_path: Path,
+    variants: list[dict[str, Any]],
+    *,
+    primary_model: str | None,
+) -> None:
+    import json
+
+    side = out_path.with_name(out_path.stem + ".variants.json")
+    side.write_text(
+        json.dumps(
+            {"primary_model": primary_model, "variants": variants},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def load_variants_sidecar(out_path: Path) -> list[dict[str, Any]]:
+    import json
+
+    side = out_path.with_name(out_path.stem + ".variants.json")
+    if not side.exists():
+        # Also check attempt path stem without _aN for multi writes that used out_path stem
+        return []
+    try:
+        data = json.loads(side.read_text(encoding="utf-8"))
+        return list(data.get("variants") or [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _with_avoid(prompt: str, negative_prompt: str) -> str:
+    full = prompt.strip()
+    if negative_prompt:
+        full = f"{full}. Avoid: {negative_prompt[:400]}"
+    return full
+
+
+def _panel_index_from_path(out_path: Path) -> int | None:
+    """Best-effort panel index from names like panel_003.png / panel_003_a0.png."""
+    stem = out_path.stem
+    parts = stem.split("_")
+    for part in parts:
+        if part.isdigit():
+            return int(part)
+        if part.startswith("a") and part[1:].isdigit():
+            continue
+    return None
 
 
 def _model_chain(settings: dict[str, Any]) -> list[str]:

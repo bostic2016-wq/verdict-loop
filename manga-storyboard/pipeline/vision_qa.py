@@ -16,6 +16,16 @@ from pipeline.roles import VISION_SYSTEM, VISION_USER
 from pipeline.router import DirectorRouter
 from pipeline.util import parse_json
 
+
+def _copy_variants_sidecar(src: Path, dest: Path) -> None:
+    """Keep the multi-model sidecar next to the final panel path."""
+    src_side = src.with_name(src.stem + ".variants.json")
+    if not src_side.exists():
+        return
+    dest_side = dest.with_name(dest.stem + ".variants.json")
+    if src_side.resolve() != dest_side.resolve():
+        dest_side.write_bytes(src_side.read_bytes())
+
 CHECK_KEYS = (
     "panel_count_and_layout",
     "reading_order",
@@ -179,8 +189,13 @@ def generate_with_qa(
             reference_paths=ref_paths,
         )
 
+        from pipeline.generate import load_variants_sidecar
+
+        variants = load_variants_sidecar(path)
+
         if not enabled:
             out_path.write_bytes(path.read_bytes())
+            _copy_variants_sidecar(path, out_path)
             return {
                 "path": str(out_path),
                 "prompt": compiled["prompt"],
@@ -189,6 +204,7 @@ def generate_with_qa(
                 "passed": True,
                 "attempt": attempt,
                 "needs_review": False,
+                "variants": variants,
             }
 
         critique = critique_panel(
@@ -208,6 +224,7 @@ def generate_with_qa(
             "passed": bool(critique.get("pass")),
             "attempt": attempt,
             "needs_review": False,
+            "variants": variants,
         }
         attempts.append(record)
         best = (
@@ -219,6 +236,7 @@ def generate_with_qa(
 
         if critique.get("pass"):
             out_path.write_bytes(Path(record["path"]).read_bytes())
+            _copy_variants_sidecar(Path(record["path"]), out_path)
             record["path"] = str(out_path)
             return record
 
@@ -238,5 +256,6 @@ def generate_with_qa(
 
     assert best is not None
     out_path.write_bytes(Path(best["path"]).read_bytes())
+    _copy_variants_sidecar(Path(best["path"]), out_path)
     best = {**best, "path": str(out_path), "needs_review": True, "passed": False, "attempts": attempts}
     return best

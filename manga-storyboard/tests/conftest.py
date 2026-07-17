@@ -113,6 +113,8 @@ def patched_app(tmp_path, monkeypatch):
 
     monkeypatch.delenv("APP_PASSWORD", raising=False)
     monkeypatch.setenv("MANGA_MOCK_IMAGES", "1")
+    # Keep AppTest from writing into the real Desktop during button smoke runs
+    monkeypatch.setenv("MANGA_DESKTOP_EXPORT", "0")
 
     run_dir = tmp_path / "run"
     (run_dir / "panels").mkdir(parents=True, exist_ok=True)

@@ -34,6 +34,13 @@ def main(argv: list[str] | None = None) -> int:
         default="anime_seedream",
         help="Image model profile from config.yaml (default: anime_seedream)",
     )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        help="OpenRouter model ids to run (enables multi-model mode). Example: "
+        "google/gemini-3-pro-image bytedance-seed/seedream-4.5",
+    )
     parser.add_argument("--mock", action="store_true", help="Placeholder images, no API spend")
     parser.add_argument("--json", action="store_true", help="Print the full run summary as JSON")
     args = parser.parse_args(argv)
@@ -58,6 +65,11 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+    if args.models:
+        settings.setdefault("models", {})["image_run_mode"] = "all_selected"
+        settings.setdefault("models", {})["image_models_selected"] = list(args.models)
+        print(f"[cli] multi-model: {', '.join(args.models)}", flush=True)
 
     def emit(event: str, payload: dict) -> None:
         idx = payload.get("index")
