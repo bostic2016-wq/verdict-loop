@@ -42,7 +42,9 @@ from pipeline.video import (
 from pipeline.video_qa import critique_video, save_qa
 from pipeline.util import list_styles, load_settings, new_run_dir, save_json
 
-st.set_page_config(page_title="Manga Storyboard", page_icon="📖", layout="wide")
+APP_VERSION = "v5"
+
+st.set_page_config(page_title=f"Manga Storyboard {APP_VERSION}", page_icon="📖", layout="wide")
 
 # Load secrets/env before anything else that needs API keys
 settings = load_settings()
@@ -61,7 +63,7 @@ if _app_password:
     if "authed" not in st.session_state:
         st.session_state.authed = False
     if not st.session_state.authed:
-        st.title("Manga Storyboard")
+        st.title(f"Manga Storyboard {APP_VERSION}")
         pw = st.text_input("Password", type="password")
         if st.button("Enter"):
             if pw == _app_password:
@@ -319,13 +321,13 @@ with st.sidebar:
     try:
         from pipeline.generate import IMAGE_PIPELINE_BUILD
 
-        st.caption(f"Build: {IMAGE_PIPELINE_BUILD}")
+        st.caption(f"{APP_VERSION} · Build: {IMAGE_PIPELINE_BUILD}")
     except Exception:
-        st.caption("Build: (old — reboot the app)")
+        st.caption(f"{APP_VERSION} · Build: (old — reboot the app)")
 
 
 # ---------- Header ----------
-st.title("Manga Storyboard")
+st.title(f"Manga Storyboard {APP_VERSION}")
 st.caption("PDF → analyze → brief → 5-panel pilot → lock & continue. Editorial QA built in.")
 
 step = st.session_state.step
