@@ -55,9 +55,11 @@ if _app_password:
     if not st.session_state.authed:
         st.title("Manga Storyboard")
         pw = st.text_input("Password", type="password")
-        if st.button("Enter") and pw == _app_password:
-            st.session_state.authed = True
-            st.rerun()
+        if st.button("Enter"):
+            if pw == _app_password:
+                st.session_state.authed = True
+                st.rerun()
+            st.error("Incorrect password.")
         st.stop()
 
 # --- Session defaults ---
@@ -81,6 +83,11 @@ DEFAULTS = {
     "create_error": None,
     "create_job_meta": None,  # pending video submit metadata
     "create_result": None,    # latest still/video output review card
+    "create_auto_generate": False,  # Regenerate should re-run Generate once
+    "export_zip_path": None,
+    "video_duration": 4,
+    "video_aspect": "9:16",
+    "video_motion": "subtle",
 }
 
 
@@ -88,6 +95,51 @@ def init_state() -> None:
     for k, v in DEFAULTS.items():
         if k not in st.session_state:
             st.session_state[k] = v
+    # Widget-owned keys (text_input/radio/checkbox) can only be written before
+    # their widgets instantiate. Handlers that run after the widgets stage
+    # values here; we apply them at the top of the next rerun.
+    pending = st.session_state.pop("_widget_pending", None)
+    if pending:
+        for k, v in pending.items():
+            st.session_state[k] = v
+
+
+def _panel_indexes(panels: list) -> list[int]:
+    return [int(p.get("index") or 0) for p in panels if p.get("index") is not None]
+
+
+def _sync_selection_widgets(panels: list, indexes: list[int]) -> None:
+    """Keep checkbox widget keys in sync with selected_panels (Streamlit ignores value= after first render)."""
+    wanted = set(int(i) for i in indexes)
+    for idx in _panel_indexes(panels):
+        st.session_state[f"sel_{idx}"] = idx in wanted
+    st.session_state.selected_panels = sorted(wanted)
+
+
+def _pilot_indexes(panels: list) -> list[int]:
+    pilot = st.session_state.get("pilot_panels") or []
+    if pilot:
+        return _panel_indexes(pilot)
+    return [i for i in _panel_indexes(panels) if i <= 5] or _panel_indexes(panels)[:5]
+
+
+def _clear_selection_widgets(panels: list | None = None) -> None:
+    panels = panels if panels is not None else (st.session_state.get("all_panels") or [])
+    for idx in _panel_indexes(panels):
+        st.session_state[f"sel_{idx}"] = False
+    # Also drop any orphaned sel_* keys from prior runs
+    for key in list(st.session_state.keys()):
+        if isinstance(key, str) and key.startswith("sel_"):
+            st.session_state[key] = False
+    st.session_state.selected_panels = []
+
+
+def _reset_app_state() -> None:
+    for k, v in DEFAULTS.items():
+        st.session_state[k] = v if not isinstance(v, list) else list(v)
+    for key in list(st.session_state.keys()):
+        if isinstance(key, str) and key.startswith("sel_"):
+            del st.session_state[key]
 
 
 init_state()
@@ -112,15 +164,18 @@ with st.sidebar:
     )
     character = st.text_input("Character name", key="lib_char", placeholder="e.g. Kaito")
     tags_raw = st.text_input("Tags (comma-separated)", key="lib_tags")
-    if st.button("Save to library", type="primary", use_container_width=True) and uploads:
-        tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
-        for f in uploads:
-            add_drawing(f.getvalue(), filename=f.name, tags=tags, character=character)
-            if character.strip():
-                # Remember this character ↔ drawing mapping permanently
-                upsert_character(character, ref=f.name)
-        st.success(f"Saved {len(uploads)} drawing(s)" + (f" as **{character}**" if character.strip() else ""))
-        st.rerun()
+    if st.button("Save to library", type="primary", use_container_width=True):
+        if not uploads:
+            st.warning("Choose one or more drawings first.")
+        else:
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            for f in uploads:
+                add_drawing(f.getvalue(), filename=f.name, tags=tags, character=character)
+                if character.strip():
+                    # Remember this character ↔ drawing mapping permanently
+                    upsert_character(character, ref=f.name)
+            st.success(f"Saved {len(uploads)} drawing(s)" + (f" as **{character}**" if character.strip() else ""))
+            st.rerun()
 
     items = load_library()
     if items:
@@ -475,7 +530,25 @@ elif step == "brief":
             st.rerun()
     with go2:
         if st.button("Back to intake", use_container_width=True):
+            # Keep library / remembered characters; clear this script run
             st.session_state.step = "intake"
+            st.session_state.analysis = None
+            st.session_state.brief = None
+            st.session_state.bible = None
+            st.session_state.run_dir = None
+            st.session_state.pilot_panels = []
+            st.session_state.all_panels = []
+            st.session_state.sequence = None
+            st.session_state.qa_round = 0
+            st.session_state.selected_panels = []
+            st.session_state.create_error = None
+            st.session_state.create_job_meta = None
+            st.session_state.create_result = None
+            st.session_state.create_auto_generate = False
+            st.session_state.export_zip_path = None
+            for key in list(st.session_state.keys()):
+                if isinstance(key, str) and key.startswith("sel_"):
+                    del st.session_state[key]
             st.rerun()
 
 # ============================================================
@@ -506,22 +579,28 @@ elif step in {"pilot", "continue"}:
                 f"Sequence notes: {seq.get('notes', '')} · issues: {', '.join(seq.get('pacing_issues') or []) or '—'}"
             )
 
-    selected = set(st.session_state.get("selected_panels") or [])
-
     if not panels:
         st.info("No panels yet.")
     else:
         q1, q2, q3 = st.columns(3)
         with q1:
-            if st.button("Select first 5", use_container_width=True):
-                st.session_state.selected_panels = [int(p.get("index")) for p in panels[:5]]
+            if st.button("Select pilot", use_container_width=True, help="Select the pilot panels (usually P1–P5)"):
+                _sync_selection_widgets(panels, _pilot_indexes(panels))
                 st.rerun()
         with q2:
             if st.button("Clear selection", use_container_width=True):
-                st.session_state.selected_panels = []
+                _clear_selection_widgets(panels)
                 st.rerun()
         with q3:
-            st.caption(f"{len(selected)} selected")
+            selected_count = len(st.session_state.get("selected_panels") or [])
+            st.caption(f"{selected_count} selected")
+
+        # Initialize checkbox keys once from selected_panels, then let widget keys own the state
+        for p in panels:
+            idx = int(p.get("index") or 0)
+            key = f"sel_{idx}"
+            if key not in st.session_state:
+                st.session_state[key] = idx in set(st.session_state.get("selected_panels") or [])
 
         for row_start in range(0, len(panels), 5):
             chunk = panels[row_start : row_start + 5]
@@ -534,12 +613,11 @@ elif step in {"pilot", "continue"}:
                     if p.get("path") and Path(p["path"]).exists():
                         st.image(p["path"], use_container_width=True)
                     st.caption(p.get("dialogue") or p.get("action") or "")
-                    checked = st.checkbox("Select", value=idx in selected, key=f"sel_{idx}")
-                    if checked and idx not in selected:
-                        selected.add(idx)
-                    elif not checked and idx in selected:
-                        selected.discard(idx)
-        st.session_state.selected_panels = sorted(selected)
+                    st.checkbox("Select", key=f"sel_{idx}")
+
+        st.session_state.selected_panels = sorted(
+            idx for idx in _panel_indexes(panels) if st.session_state.get(f"sel_{idx}")
+        )
 
     # Usage summary before Create so errors never hide spend
     if run_dir:
@@ -565,37 +643,49 @@ elif step in {"pilot", "continue"}:
         source = st.radio(
             "Source",
             ["Selected panels", "Next story beat", "Custom note"],
-            index=["Selected panels", "Next story beat", "Custom note"].index(
-                st.session_state.get("create_source", "Selected panels")
-            ),
+            key="create_source",
             horizontal=True,
         )
-        st.session_state.create_source = source
     with c2:
         output = st.radio(
             "Output",
             ["Still panels", "Video clip"],
-            index=["Still panels", "Video clip"].index(st.session_state.get("create_output", "Still panels")),
+            key="create_output",
             horizontal=True,
         )
-        st.session_state.create_output = output
 
     direction = st.text_input(
         "Direction (optional)",
-        value=st.session_state.get("create_direction", ""),
+        key="create_direction",
         placeholder="e.g. close-up on the punch · animate only hair and camera push-in",
     )
-    st.session_state.create_direction = direction
 
     with st.expander("Advanced video options", expanded=False):
         vid_cfg = settings.get("video") or {}
-        duration = st.selectbox("Duration (sec)", [4, 5, 6, 8], index=0)
-        aspect = st.selectbox("Aspect ratio", ["9:16", "16:9", "3:4"], index=0)
+        dur_opts = [4, 5, 6, 8]
+        asp_opts = ["9:16", "16:9", "3:4"]
+        mot_opts = ["subtle", "action", "camera pan", "zoom-in", "hold frame"]
+        cur_dur = int(st.session_state.get("video_duration") or 4)
+        cur_asp = st.session_state.get("video_aspect") or "9:16"
+        cur_mot = st.session_state.get("video_motion") or "subtle"
+        duration = st.selectbox(
+            "Duration (sec)",
+            dur_opts,
+            index=dur_opts.index(cur_dur) if cur_dur in dur_opts else 0,
+        )
+        aspect = st.selectbox(
+            "Aspect ratio",
+            asp_opts,
+            index=asp_opts.index(cur_asp) if cur_asp in asp_opts else 0,
+        )
         motion = st.selectbox(
             "Motion style",
-            ["subtle", "action", "camera pan", "zoom-in", "hold frame"],
-            index=0,
+            mot_opts,
+            index=mot_opts.index(cur_mot) if cur_mot in mot_opts else 0,
         )
+        st.session_state.video_duration = int(duration)
+        st.session_state.video_aspect = aspect
+        st.session_state.video_motion = motion
         st.caption(f"Model: {vid_cfg.get('model', 'google/veo-3.1-lite')}")
 
     selected_idxs = st.session_state.get("selected_panels") or []
@@ -675,8 +765,24 @@ elif step in {"pilot", "continue"}:
     result = st.session_state.get("create_result")
     if result:
         st.markdown("#### Review")
-        if result.get("type") == "video" and result.get("path") and Path(result["path"]).exists():
-            st.video(result["path"])
+        if result.get("accepted"):
+            st.success("Accepted.")
+        rtype = result.get("type")
+        rpath = result.get("path") or ""
+        if rtype == "video" and rpath and Path(rpath).exists():
+            st.video(rpath)
+        elif rtype == "still" and rpath and Path(rpath).exists():
+            st.image(rpath, use_container_width=True)
+        elif rtype == "still_batch":
+            batch_idxs = set(int(i) for i in (result.get("panel_indexes") or []) if i is not None)
+            batch_panels = [p for p in panels if int(p.get("index", -1)) in batch_idxs][:5]
+            if batch_panels:
+                bcols = st.columns(len(batch_panels))
+                for col, p in zip(bcols, batch_panels):
+                    with col:
+                        if p.get("path") and Path(p["path"]).exists():
+                            st.image(p["path"], use_container_width=True)
+                        st.caption(f"P{p.get('index')}")
         qa = result.get("qa") or {}
         if qa.get("pass"):
             st.success(f"QA passed · score {qa.get('score', '—')}")
@@ -690,30 +796,75 @@ elif step in {"pilot", "continue"}:
 
         r1, r2, r3 = st.columns(3)
         with r1:
-            if st.button("Accept", type="primary", use_container_width=True):
+            if st.button("Accept", type="primary", use_container_width=True, disabled=bool(result.get("accepted"))):
                 result["accepted"] = True
                 if run_dir:
                     save_output_record(run_dir, result)
                 st.session_state.create_result = result
-                st.success("Accepted.")
+                st.rerun()
         with r2:
-            if st.button("Regenerate", use_container_width=True):
-                # Pre-fill direction with QA notes and clear result so Generate runs again
+            if st.button("Regenerate", use_container_width=True, disabled=bool(job_meta)):
+                # Pre-fill direction with QA notes and immediately re-run Generate.
+                # These are widget-owned keys, so stage them for the next rerun.
+                pending: dict = {}
                 note = (qa.get("rewrite_notes") or "").strip()
                 if note:
-                    st.session_state.create_direction = note
+                    pending["create_direction"] = note
                 st.session_state.create_result = None
-                st.session_state.create_output = "Video clip" if result.get("type") == "video" else "Still panels"
-                st.session_state.create_source = "Selected panels"
+                st.session_state.create_error = None
+
+                def _stage_selection(indexes: list[int]) -> None:
+                    wanted = set(int(i) for i in indexes)
+                    for idx in _panel_indexes(panels):
+                        pending[f"sel_{idx}"] = idx in wanted
+                    st.session_state.selected_panels = sorted(wanted)
+
+                if result.get("type") == "video":
+                    pending["create_output"] = "Video clip"
+                    pending["create_source"] = "Selected panels"
+                    # Restore the panels that produced this clip
+                    prior = [int(i) for i in (result.get("panel_indexes") or []) if i is not None]
+                    if prior:
+                        _stage_selection(prior)
+                elif result.get("type") == "still":
+                    pending["create_output"] = "Still panels"
+                    pending["create_source"] = "Selected panels"
+                    prior = [int(i) for i in (result.get("panel_indexes") or []) if i is not None]
+                    if prior:
+                        _stage_selection(prior)
+                else:
+                    # still_batch → make another next-beat batch
+                    pending["create_output"] = "Still panels"
+                    pending["create_source"] = "Next story beat"
+                st.session_state._widget_pending = pending
+                st.session_state.create_auto_generate = True
                 st.rerun()
         with r3:
             if st.button("Edit direction", use_container_width=True):
                 st.session_state.create_result = None
+                st.session_state.create_auto_generate = False
                 st.rerun()
 
-    if st.button("Generate", type="primary", use_container_width=True, disabled=bool(job_meta)):
+    do_generate = st.button(
+        "Generate",
+        type="primary",
+        use_container_width=True,
+        disabled=bool(job_meta),
+    ) or bool(st.session_state.get("create_auto_generate"))
+
+    if do_generate:
+        st.session_state.create_auto_generate = False
         st.session_state.create_error = None
         st.session_state.create_result = None
+        # Re-read controls after Regenerate may have rewritten them
+        source = st.session_state.get("create_source", source)
+        output = st.session_state.get("create_output", output)
+        direction = st.session_state.get("create_direction", direction)
+        selected_idxs = st.session_state.get("selected_panels") or []
+        duration = int(st.session_state.get("video_duration") or duration)
+        aspect = st.session_state.get("video_aspect") or aspect
+        motion = st.session_state.get("video_motion") or motion
+
         if not run_dir:
             st.session_state.create_error = "Missing run dir"
             st.rerun()
@@ -823,18 +974,25 @@ elif step in {"pilot", "continue"}:
         if step == "pilot" and st.button("Looks good — continue", use_container_width=True):
             st.session_state.step = "continue"
             st.rerun()
+        elif step == "continue":
+            if st.button("Back to pilot", use_container_width=True):
+                st.session_state.step = "pilot"
+                st.rerun()
     with nav2:
         if run_dir and panels and st.button("Export ZIP", use_container_width=True):
             zpath = export_zip(run_dir, panels)
+            st.session_state.export_zip_path = str(zpath)
+            st.rerun()
+        zip_path = st.session_state.get("export_zip_path")
+        if zip_path and Path(zip_path).exists():
             st.download_button(
                 "Download storyboard.zip",
-                data=zpath.read_bytes(),
+                data=Path(zip_path).read_bytes(),
                 file_name="storyboard.zip",
                 mime="application/zip",
                 use_container_width=True,
             )
     with nav3:
         if st.button("Start over", use_container_width=True):
-            for k, v in DEFAULTS.items():
-                st.session_state[k] = v
+            _reset_app_state()
             st.rerun()

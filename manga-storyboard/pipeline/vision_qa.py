@@ -1,4 +1,9 @@
-"""Per-panel vision QA + auto-retry loop."""
+"""Per-panel vision QA (fail-closed conformance verdict) + auto-retry loop.
+
+The critic judges conformance to the source script and reference art — not
+artistic taste. Every check must explicitly pass; a missing check, an uncertain
+critic, or an unavailable critic all count as FAIL (never soft-pass).
+"""
 
 from __future__ import annotations
 
@@ -11,16 +16,79 @@ from pipeline.roles import VISION_SYSTEM, VISION_USER
 from pipeline.router import DirectorRouter
 from pipeline.util import parse_json
 
+CHECK_KEYS = (
+    "panel_count_and_layout",
+    "reading_order",
+    "character_consistency",
+    "scene_match",
+    "text_and_bubbles",
+    "anatomy_artifacts",
+)
 
-WEIGHTS = {
-    "narrative_match": 0.20,
-    "composition": 0.15,
-    "style_fit": 0.15,
-    "technical_clean": 0.10,
-    "continuity": 0.10,
-    "clean_frame": 0.10,
-    "character_presence": 0.20,
-}
+
+def _failed_verdict(reason: str) -> dict[str, Any]:
+    return {
+        "pass": False,
+        "checks": {
+            k: {"ok": False, "notes": reason} for k in CHECK_KEYS
+        },
+        "visible_characters": [],
+        "missing_characters": [],
+        "notes": reason,
+        "suggested_prompt_fix": "",
+        # Compatibility fields (Streamlit filmstrip / review card)
+        "score": 0.0,
+        "issues": [reason],
+        "rewrite_notes": "",
+    }
+
+
+def _normalize_verdict(raw: dict[str, Any], required_names: list[str]) -> dict[str, Any]:
+    """Fail-closed normalization: any absent or non-true check fails the verdict."""
+    checks_in = raw.get("checks") or {}
+    checks: dict[str, dict[str, Any]] = {}
+    for key in CHECK_KEYS:
+        c = checks_in.get(key)
+        if not isinstance(c, dict):
+            checks[key] = {"ok": False, "notes": "check missing from critic response"}
+            continue
+        checks[key] = {**c, "ok": c.get("ok") is True}
+
+    missing = [str(m) for m in (raw.get("missing_characters") or [])]
+    if missing and checks["character_consistency"]["ok"]:
+        checks["character_consistency"] = {
+            "ok": False,
+            "notes": f"critic listed missing characters: {', '.join(missing)}",
+        }
+
+    ok_count = sum(1 for c in checks.values() if c["ok"])
+    all_ok = ok_count == len(CHECK_KEYS)
+    passed = bool(raw.get("pass")) and all_ok
+
+    issues = [
+        f"{key}: {checks[key].get('notes') or 'failed'}"
+        for key in CHECK_KEYS
+        if not checks[key]["ok"]
+    ]
+    fix = str(raw.get("suggested_prompt_fix") or "").strip()
+    if not passed and not fix and required_names:
+        fix = (
+            f"include ALL of: {', '.join(required_names)}. "
+            f"Show exactly {len(required_names)} characters clearly in frame."
+        )
+
+    return {
+        "pass": passed,
+        "checks": checks,
+        "visible_characters": raw.get("visible_characters") or [],
+        "missing_characters": missing,
+        "notes": str(raw.get("notes") or ""),
+        "suggested_prompt_fix": fix,
+        # Compatibility fields
+        "score": round(ok_count / len(CHECK_KEYS), 3),
+        "issues": issues,
+        "rewrite_notes": fix,
+    }
 
 
 def critique_panel(
@@ -30,29 +98,31 @@ def critique_panel(
     image_path: Path,
     *,
     prior_notes: str = "",
-    pass_score: float = 0.7,
+    pass_score: float = 0.7,  # kept for call compatibility; verdict is check-based
     reference_paths: list[Path] | None = None,
+    expected_layout: str = "",
 ) -> dict[str, Any]:
     cast = resolve_panel_characters(bible, panel)
     required = ", ".join(f"{c['name']} ({c['look']})" for c in cast) or "(none listed)"
+    required_names = [c["name"] for c in cast]
     refs = [Path(p) for p in (reference_paths or []) if Path(p).exists()][:3]
     user_msg = VISION_USER.format(
         bible_excerpt=bible_excerpt(bible),
         panel=str(panel),
+        expected_layout=expected_layout
+        or "exactly 1 panel (single illustration, no collage or page grid)",
         required_cast=required,
         power_expected="YES — the script calls for power/energy effects"
         if panel_calls_for_power(panel)
         else "NO — there must be NO energy auras or power effects in this panel",
         prior=prior_notes or "(first panel)",
-        pass_score=pass_score,
     )
     if refs:
         ref_names = [c["name"] for c in cast if c.get("ref_path")]
         user_msg += (
-            f"\n\nIMAGE 1 is the generated panel. Images 2+ are the artist's OWN reference drawings "
-            f"of: {', '.join(ref_names)}. Judge character likeness against these references — "
-            f"face, hairstyle, outfit must match. Score character_presence below 1.0 if a character "
-            f"is missing OR clearly off-model versus their reference."
+            f"\n\nIMAGE 1 is the generated storyboard image. Images 2+ are the artist's OWN "
+            f"reference drawings of: {', '.join(ref_names)}. Judge character_consistency against "
+            f"these references — face, hairstyle, outfit must match. Off-model = ok false."
         )
     try:
         raw = router.complete_vision(
@@ -62,43 +132,12 @@ def critique_panel(
             [image_path, *refs],
             json_mode=True,
         )
-        critique = parse_json(raw)
-    except Exception as exc:  # noqa: BLE001 — soft-pass on critic failure
-        return {
-            "pass": True,
-            "score": pass_score,
-            "issues": [f"Vision critic unavailable: {exc}"],
-            "rewrite_notes": "",
-            "soft_pass": True,
-        }
-
-    dims = critique.get("dimensions") or {}
-    if dims:
-        # Default character_presence to 1 if cast empty
-        if not cast:
-            dims.setdefault("character_presence", 1.0)
-        score = sum(float(dims.get(k, 0) or 0) * w for k, w in WEIGHTS.items())
-        critique["score"] = round(score, 3)
-        missing = critique.get("missing_characters") or []
-        char_fail = bool(cast) and (
-            float(dims.get("character_presence", 1) or 1) < 1.0 or bool(missing)
-        )
-        hard_fail = (
-            float(dims.get("narrative_match", 1) or 1) < 0.4
-            or float(dims.get("clean_frame", 1) or 1) < 0.4
-            or char_fail
-        )
-        critique["pass"] = bool(critique.get("pass")) and score >= pass_score and not hard_fail
-        if char_fail and not critique.get("rewrite_notes"):
-            names = ", ".join(c["name"] for c in cast)
-            critique["rewrite_notes"] = (
-                f"include ALL of: {names}. Show exactly {len(cast)} characters clearly in frame."
-            )
-    else:
-        critique["pass"] = bool(critique.get("pass")) and float(critique.get("score", 0) or 0) >= pass_score
-    critique.setdefault("issues", [])
-    critique.setdefault("rewrite_notes", "")
-    return critique
+        data = parse_json(raw)
+    except Exception as exc:  # noqa: BLE001 — fail closed, never soft-pass
+        return _failed_verdict(f"Vision critic unavailable: {exc}")
+    if not isinstance(data, dict):
+        return _failed_verdict("Vision critic returned non-object JSON")
+    return _normalize_verdict(data, required_names)
 
 
 def generate_with_qa(
@@ -183,14 +222,19 @@ def generate_with_qa(
             record["path"] = str(out_path)
             return record
 
-        rewrite = critique.get("rewrite_notes") or "; ".join(critique.get("issues") or [])
+        # Apply the critic's suggested prompt fix for the single regeneration
+        rewrite = (
+            critique.get("suggested_prompt_fix")
+            or critique.get("rewrite_notes")
+            or "; ".join(critique.get("issues") or [])
+        )
         if not rewrite:
             cast = resolve_panel_characters(bible, panel)
             if cast:
                 names = ", ".join(c["name"] for c in cast)
                 rewrite = f"include ALL of: {names}. exactly {len(cast)} characters visible."
             else:
-                rewrite = "Improve manga line clarity, composition, and brief match."
+                rewrite = "Match the script beat exactly: correct action, setting, and cast."
 
     assert best is not None
     out_path.write_bytes(Path(best["path"]).read_bytes())

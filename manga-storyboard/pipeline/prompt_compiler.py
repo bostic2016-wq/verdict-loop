@@ -50,7 +50,14 @@ def resolve_panel_characters(bible: dict[str, Any], panel: dict[str, Any]) -> li
         match = _bible_char(bible, name)
         look = (match.get("look") if match else "") or "distinct manga character"
         ref = match.get("ref") if match else None
-        ref_path = resolve_ref_path(ref) or resolve_ref_path(name)
+        # Explicit ref_path (e.g. CLI refs folder) wins over the style library lookup
+        explicit = (match or {}).get("ref_path")
+        from pathlib import Path as _Path
+
+        if explicit and _Path(explicit).exists():
+            ref_path = _Path(explicit)
+        else:
+            ref_path = resolve_ref_path(ref) or resolve_ref_path(name)
         resolved.append(
             {
                 "name": match.get("name") if match else name,

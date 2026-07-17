@@ -1,0 +1,48 @@
+{
+  "title": "Rooftop Duel",
+  "style": {
+    "aesthetic": "jjk_inspired",
+    "color_mode": "full color",
+    "world": "modern Tokyo at dusk, rooftops",
+    "tone": "tense showdown"
+  },
+  "characters": [
+    {"name": "Kaito", "look": "short black hair, red bomber jacket, athletic teen", "ref": "kaito.png"},
+    {"name": "Ren", "look": "long silver hair, dark trench coat, calm expression", "ref": "ren.png"}
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "layout": "single panel per image, read right-to-left across the page",
+      "panels": [
+        {
+          "index": 1,
+          "shot_type": "wide",
+          "subject": "Kaito and Ren facing each other on a rooftop",
+          "action": "the two square off at sunset, wind whipping their clothes",
+          "dialogue": "",
+          "setting": "Tokyo rooftop, dusk, city skyline behind",
+          "characters": ["Kaito", "Ren"]
+        },
+        {
+          "index": 2,
+          "shot_type": "close",
+          "subject": "Kaito's face",
+          "action": "Kaito narrows his eyes and clenches a fist",
+          "dialogue": "You shouldn't have come here.",
+          "setting": "same rooftop, dusk",
+          "characters": ["Kaito"]
+        },
+        {
+          "index": 3,
+          "shot_type": "medium",
+          "subject": "Ren stepping forward",
+          "action": "Ren takes one slow step, coat flaring",
+          "dialogue": "And yet here I am.",
+          "setting": "same rooftop, dusk",
+          "characters": ["Ren"]
+        }
+      ]
+    }
+  ]
+}

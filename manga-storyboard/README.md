@@ -1,6 +1,6 @@
 # Manga Storyboard (v5)
 
-Local web app that turns a manga **transcript PDF** into storyboard panels — with optional **5-panel video** and a **token/cost usage** view.
+Local web app that turns a manga **transcript PDF** into storyboard panels — with optional **5-panel video** and a **token/cost usage** view. Also ships a **correct-loop CLI** (script + refs → Seedream → fail-closed vision QA → one fix-and-regenerate).
 
 **Flow:** Upload PDF → analyze → editable brief + gap questions → **5-panel pilot** → optional video clip → lock & continue.  
 **Quality:** Creative bible → panel grammar → per-panel vision QA.  
@@ -12,11 +12,11 @@ Local web app that turns a manga **transcript PDF** into storyboard panels — w
   - `Nano Banana Pro → FLUX` (default, strong multi-reference fidelity)
   - `Seedream 4.5 → FLUX` (anime-focused OpenRouter model)
 - **Create drawer** on the filmstrip:
-  1. Select panels (checkboxes)
+  1. Select panels (checkboxes) — **Select pilot** grabs P1–P5 in one click
   2. Choose source: Selected panels / Next story beat / Custom note
   3. Choose output: Still panels / Video clip
   4. Optional direction → Generate
-  5. Review with Accept / Regenerate / Edit direction
+  5. Review with Accept / Regenerate / Edit direction (Regenerate re-runs immediately)
 - **Video QA**: samples frames from the clip and scores panel match, character/outfit consistency, blur, and motion
 - **Run usage / token view**: estimated tokens, image counts, video counts, and rough USD cost per run
 - Full-color panels by default; power auras only when the script calls for them; outfit consistency locked to character looks/refs
@@ -51,14 +51,47 @@ cp .env.example .env
 streamlit run app.py
 ```
 
+## Correct loop CLI
+
+Generate storyboard panels from a **structured script JSON** plus a **reference folder**, with fail-closed vision QA and exactly one fix-and-regenerate per panel:
+
+```bash
+cd manga-storyboard
+python cli.py --script examples/example_script.json --refs ./refs --out ./out
+# no API spend:
+python cli.py --script examples/example_script.json --out ./out --mock
+```
+
+- Script schema: see `examples/example_script.json` (`characters` with `look`/`ref`, `pages[].panels` with `index`, `shot_type`, `subject`, `action`, `dialogue`, `setting`, `characters`).
+- Refs folder: images matched by the script's `ref` filename or by character name (`kaito.png` ↔ "Kaito").
+- Output layout: `out/panels/` (finals + `_a0`/`_a1` attempts), `out/prompts/`, `out/qa/` (structured verdicts), `out/run.json`.
+- Exit code is non-zero if any panel still fails QA after its one retry.
+
+### QA verdict (fail-closed)
+
+Each image is judged by a vision model for **conformance to the script and references — not artistic taste**. The JSON verdict has six checks, each `ok: true/false` with notes: `panel_count_and_layout`, `reading_order`, `character_consistency`, `scene_match`, `text_and_bubbles`, `anatomy_artifacts`, plus overall `notes` and a `suggested_prompt_fix`. **Any uncertainty, missing check, or critic error counts as FAIL** — the loop applies the suggested fix and regenerates exactly once.
+
+## Button smoke loop
+
+Automated check that every primary UI control still works (mock mode, no API spend):
+
+```bash
+cd manga-storyboard
+python -m pytest tests/ -q
+```
+
+Covers: password gate, Analyze script, Submit answers / Skip to pilot, Generate 5-panel pilot, Back to intake, Select pilot / Clear selection, panel checkboxes, Generate (still + validation errors), Accept / Regenerate / Edit direction, continue/back navigation, Export ZIP, and Start over — plus fail-closed QA unit tests.
+
 ## API keys
 
 | Key | Used for |
 |-----|----------|
 | `OPENROUTER_API_KEY` | Director LLM, vision QA, images, video |
+| `SEEDREAM_MODEL` | Optional override of the Seedream image model id |
+| `VISION_MODEL` | Optional override of the QA vision model id |
 | `GROQ_API_KEY` / `GEMINI_API_KEY` | Optional LLM fallbacks |
 
-Use **Mock images** in the sidebar to test the workflow without image spend.
+Keys are read from environment variables / `.env` only — never hardcoded. Use **Mock images** in the sidebar (or `--mock` / `MANGA_MOCK_IMAGES=1`) to test the workflow without image spend.
 
 ## Config highlights (`config.yaml`)
 

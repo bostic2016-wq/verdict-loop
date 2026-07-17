@@ -128,55 +128,68 @@ Return STRICT JSON: {{"prompt": "...", "negative_prompt": "..."}}
 No speech bubbles, no watermarks, no text in the image. Manga line art style matching the aesthetic preset tags.
 ALWAYS state the exact number of characters and name each one with visual traits. Missing cast = failed prompt."""
 
-VISION_SYSTEM = """You are a ruthless manga storyboard editor doing vision QA.
-Judge ONE panel image against its brief and creative bible.
-Return STRICT JSON only.
-Missing required characters is a HARD FAIL."""
+VISION_SYSTEM = """You are a strict manga storyboard QA inspector.
+Judge ONE generated storyboard image for CONFORMANCE to its source script and reference art.
+You are NOT judging artistic taste, style preference, or beauty — only whether the image
+matches the source material.
+FAIL-CLOSED RULE: whenever you are uncertain about any check, mark that check ok=false.
+Never give the benefit of the doubt. Return STRICT JSON only."""
 
 VISION_USER = """Creative bible (excerpt):
 {bible_excerpt}
 
-Panel brief:
+Source script for this image (panel brief):
 {panel}
 
-Required characters for this panel (ALL must be visible):
+Expected panel count / layout for this image: {expected_layout}
+
+Required characters (ALL must be visible and on-model vs their references):
 {required_cast}
 
-Power/energy effects expected in this panel: {power_expected}
+Power/energy effects expected: {power_expected}
 
 Prior panel notes (continuity):
 {prior}
 
-Score dimensions 0–1: narrative_match, composition, style_fit, technical_clean, continuity, clean_frame, character_presence.
-character_presence = fraction of required cast clearly visible (1.0 only if ALL required characters appear).
-OUTFIT CHECK: each character must wear the outfit from their look description / reference drawing.
-A character in the wrong outfit counts as off-model — reduce character_presence and list it in issues.
-POWER-EFFECT CHECK: if power effects are NOT expected but the image shows energy auras, glowing
-power lines, or crackling energy around characters, score style_fit at most 0.3 and list it in issues
-with rewrite note "remove all energy aura / power effects".
-Hard-fail if narrative_match < 0.4 OR clean_frame < 0.4 OR character_presence < 1.0 when required cast is non-empty.
-pass = weighted_score >= {pass_score} AND no hard-fail.
+Run these conformance checks. Each check gets ok=true ONLY if you are confident it conforms;
+if uncertain, ok=false with a note explaining the uncertainty.
 
-Weights: narrative 0.20, composition 0.15, style 0.15, technical 0.10, continuity 0.10, clean_frame 0.10, character_presence 0.20
+1. panel_count_and_layout — the image contains the expected number of panels with the expected
+   layout (a single-panel image must be exactly one panel: no collage, no page grid, no borders
+   splitting it into sub-panels).
+2. reading_order — for multi-panel images, panels read in correct manga order (right-to-left,
+   top-to-bottom) matching the script sequence. For a single panel, ok=true only if nothing in
+   the image implies a conflicting sequence.
+3. character_consistency — every required character is present and matches their reference
+   drawing / look description: same face, hairstyle, outfit, colors, proportions. A missing or
+   off-model character means ok=false.
+4. scene_match — setting, action, shot type, and emotion match the script beat. Wrong action,
+   wrong location, or missing key props mean ok=false.
+5. text_and_bubbles — any text or speech bubbles in the image are legible, correctly placed,
+   and belong there. Garbled glyphs, gibberish lettering, or unrequested bubbles/text mean
+   ok=false. If the script forbids in-image text and there is none, ok=true.
+6. anatomy_artifacts — no anatomy errors (extra/missing fingers or limbs, broken joints,
+   melted faces) and no generation artifacts (duplicated features, watermark, heavy noise,
+   smearing). Any such problem means ok=false.
 
 Return:
 {{
   "pass": true/false,
-  "score": 0.0,
-  "dimensions": {{
-    "narrative_match": 0.0,
-    "composition": 0.0,
-    "style_fit": 0.0,
-    "technical_clean": 0.0,
-    "continuity": 0.0,
-    "clean_frame": 0.0,
-    "character_presence": 0.0
+  "checks": {{
+    "panel_count_and_layout": {{"ok": true/false, "expected": "...", "observed": "...", "notes": "..."}},
+    "reading_order": {{"ok": true/false, "notes": "..."}},
+    "character_consistency": {{"ok": true/false, "notes": "..."}},
+    "scene_match": {{"ok": true/false, "notes": "..."}},
+    "text_and_bubbles": {{"ok": true/false, "notes": "..."}},
+    "anatomy_artifacts": {{"ok": true/false, "notes": "..."}}
   }},
   "visible_characters": ["names you can identify"],
   "missing_characters": ["required names not visible"],
-  "issues": ["..."],
-  "rewrite_notes": "if fail, start with: include ALL of: Name1, Name2... then other fixes"
+  "notes": "one-paragraph overall assessment",
+  "suggested_prompt_fix": "if any check failed: a concrete prompt revision that would fix the worst failures, starting with the required cast (include ALL of: Name1, Name2 ...)"
 }}
+
+pass = true ONLY if every check has ok=true. Any uncertainty anywhere = pass false.
 """
 
 VIDEO_VISION_SYSTEM = """You are a ruthless manga animation QA editor.

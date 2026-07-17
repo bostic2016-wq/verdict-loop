@@ -14,7 +14,7 @@ from urllib.parse import quote
 import httpx
 
 
-IMAGE_PIPELINE_BUILD = "2026-07-16-v5-video-tokens"
+IMAGE_PIPELINE_BUILD = "2026-07-16-button-audit"
 
 # Nano Banana Pro first (best multi-reference character fidelity).
 # FLUX is the reliable fallback. GPT Image is omitted — openai/gpt-image-2
@@ -45,7 +45,10 @@ def generate_panel_image(
     height: int | None = None,
     seed: int | None = None,
     reference_paths: list[Path] | None = None,
+    strict: bool | None = None,
 ) -> Path:
+    if strict is None:
+        strict = bool((settings.get("generation") or {}).get("strict"))
     backend = _resolve_backend(settings)
     width = width or settings.get("defaults", {}).get("image_width", 768)
     height = height or settings.get("defaults", {}).get("image_height", 1024)
@@ -57,6 +60,10 @@ def generate_panel_image(
     if backend == "mock":
         return _mock_image(out_path, full_prompt, width, height)
     if backend == "pollinations":
+        if strict:
+            raise ImageGenError(
+                "OPENROUTER_API_KEY missing — strict mode does not fall back to Pollinations"
+            )
         return _pollinations(full_prompt, out_path, width, height, seed)
 
     last_err: Exception | None = None
@@ -76,6 +83,8 @@ def generate_panel_image(
         except Exception as exc:  # noqa: BLE001 — try next model
             last_err = exc
             print(f"[manga-gen] fail {model}: {exc}", file=sys.stderr, flush=True)
+    if strict:
+        raise ImageGenError(f"All OpenRouter image models failed: {last_err}")
     try:
         print("[manga-gen] falling back to pollinations", file=sys.stderr, flush=True)
         return _pollinations(full_prompt, out_path, width, height, seed)
